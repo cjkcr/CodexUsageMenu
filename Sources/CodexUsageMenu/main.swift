@@ -151,6 +151,29 @@ private final class CodexUsageClient {
     }
 }
 
+private enum CodexActivity {
+    private static let recentSessionInterval: TimeInterval = 5 * 60
+
+    static func hasRecentSession(at now: Date = .now) -> Bool {
+        let home = ProcessInfo.processInfo.environment["CODEX_HOME"]
+            .map(URL.init(fileURLWithPath:))
+            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex")
+        let sessions = home.appendingPathComponent("sessions", isDirectory: true)
+        guard let files = FileManager.default.enumerator(
+            at: sessions,
+            includingPropertiesForKeys: [.isRegularFileKey, .contentModificationDateKey],
+            options: [.skipsHiddenFiles, .skipsPackageDescendants]
+        ) else { return false }
+        for case let file as URL in files where file.pathExtension == "jsonl" {
+            guard let values = try? file.resourceValues(forKeys: [.isRegularFileKey, .contentModificationDateKey]),
+                  values.isRegularFile == true, let modified = values.contentModificationDate else { continue }
+            let age = now.timeIntervalSince(modified)
+            if age >= 0 && age < recentSessionInterval { return true }
+        }
+        return false
+    }
+}
+
 private final class StatusContentView: NSView {
     private let codexIcon = Bundle.main.url(forResource: "codex-mark", withExtension: "png")
         .flatMap(NSImage.init(contentsOf:))
@@ -243,8 +266,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     private var language = AppLanguage.current()
     private var displayState: DisplayState = .loading
     private var refreshing = false
-    private var timer: Timer?
-    private var languageTimer: Timer?
+    private var activityTimer: Timer?
+    private var lastRefreshStartedAt: Date?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: 168)
@@ -267,15 +290,39 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
 
         render()
         refreshNow()
-        timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in self?.refreshNow() }
-        languageTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
-            self?.checkLanguage()
+        activityTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+            self?.refreshIfDue()
         }
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self, selector: #selector(applicationActivated),
+            name: NSWorkspace.didActivateApplicationNotification, object: nil
+        )
         NotificationCenter.default.addObserver(self, selector: #selector(checkLanguage),
                                                name: NSLocale.currentLocaleDidChangeNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(checkLanguage),
                                                name: UserDefaults.didChangeNotification, object: nil)
+        DistributedNotificationCenter.default().addObserver(
+            self, selector: #selector(checkLanguage),
+            name: Notification.Name("AppleLanguagePreferencesChangedNotification"), object: nil
+        )
     }
+
+    private func refreshIfDue() {
+        let bundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+        let codexIsForeground = bundleID == "com.openai.codex" || bundleID == "com.openai.chatgpt"
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let active = codexIsForeground || CodexActivity.hasRecentSession()
+            DispatchQueue.main.async {
+                guard let self, let lastRefreshStartedAt = self.lastRefreshStartedAt else { return }
+                let interval: TimeInterval = active ? 2 * 60 : 60 * 60
+                if Date.now.timeIntervalSince(lastRefreshStartedAt) >= interval - 1 {
+                    self.refreshNow()
+                }
+            }
+        }
+    }
+
+    @objc private func applicationActivated() { refreshIfDue() }
 
     @objc private func checkLanguage() {
         let current = AppLanguage.current()
@@ -287,6 +334,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func refreshNow() {
         guard !refreshing else { return }
         refreshing = true
+        lastRefreshStartedAt = .now
         DispatchQueue.global(qos: .utility).async { [weak self] in
             guard let self else { return }
             let result = Result { try self.client.fetch() }
