@@ -209,6 +209,27 @@ private enum CodexActivity {
     }
 }
 
+private enum StatusDisplayMode: Int, CaseIterable {
+    case automatic, full, compact, iconOnly
+
+    var width: CGFloat {
+        switch self {
+        case .automatic, .full: return 168
+        case .compact: return 116
+        case .iconOnly: return 24
+        }
+    }
+
+    func title(in language: AppLanguage) -> String {
+        switch self {
+        case .automatic: return language.text("自动", "自動", "Automatic")
+        case .full: return language.text("完整", "完整", "Full")
+        case .compact: return language.text("紧凑", "緊湊", "Compact")
+        case .iconOnly: return language.text("仅图标", "僅圖示", "Icon only")
+        }
+    }
+}
+
 private final class StatusContentView: NSView {
     private let codexIcon = Bundle.main.url(forResource: "codex-mark", withExtension: "png")
         .flatMap(NSImage.init(contentsOf:))
@@ -224,6 +245,7 @@ private final class StatusContentView: NSView {
     }()
     var usesWhiteForeground = false
     var previewBackground: NSColor?
+    var displayMode: StatusDisplayMode = .full { didSet { needsDisplay = true } }
     var fiveHour = "—" { didSet { needsDisplay = true } }
     var week = "—" { didSet { needsDisplay = true } }
     var resets = "—" { didSet { needsDisplay = true } }
@@ -238,10 +260,16 @@ private final class StatusContentView: NSView {
             previewBackground.setFill()
             bounds.fill()
         }
-        let columns: [(String, String, CGFloat, CGFloat)] = [
-            ("5 H", fiveHour, 3, 39),
-            ("WEEK", week, 45, 45)
-        ]
+        if displayMode == .iconOnly {
+            (usesWhiteForeground ? whiteCodexIcon : codexIcon)?
+                .draw(in: NSRect(x: 1, y: 1, width: 22, height: 22),
+                      from: .zero, operation: .sourceOver, fraction: 1)
+            return
+        }
+        let compact = displayMode == .compact
+        let columns: [(String, String, CGFloat, CGFloat)] = compact
+            ? [("5 H", fiveHour, 0, 29), ("WEEK", week, 30, 35)]
+            : [("5 H", fiveHour, 3, 39), ("WEEK", week, 45, 45)]
         let labelFont = NSFont.systemFont(ofSize: 7, weight: .medium)
         let valueFont = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .semibold)
         let foreground: NSColor = usesWhiteForeground ? .white : .black
@@ -251,10 +279,13 @@ private final class StatusContentView: NSView {
             drawText(value, font: valueFont, color: foreground,
                      in: NSRect(x: x, y: 1, width: width, height: 12))
         }
-        drawText("↻\(resets)", font: NSFont.menuBarFont(ofSize: 0),
-                 color: foreground, in: NSRect(x: 92, y: 3, width: 39, height: 18))
+        drawText("↻\(resets)", font: compact ? NSFont.systemFont(ofSize: 11, weight: .medium)
+                                           : NSFont.menuBarFont(ofSize: 0),
+                 color: foreground, in: compact ? NSRect(x: 66, y: 3, width: 25, height: 18)
+                                                : NSRect(x: 92, y: 3, width: 39, height: 18))
         (usesWhiteForeground ? whiteCodexIcon : codexIcon)?
-            .draw(in: NSRect(x: 136, y: -1, width: 26, height: 26),
+            .draw(in: compact ? NSRect(x: 92, y: 1, width: 22, height: 22)
+                              : NSRect(x: 136, y: -1, width: 26, height: 26),
                   from: .zero, operation: .sourceOver, fraction: 1)
     }
 
@@ -282,6 +313,8 @@ private final class StatusContentView: NSView {
 }
 
 private final class AppDelegate: NSObject, NSApplicationDelegate {
+    private static let displayModePreferenceKey = "StatusDisplayMode"
+
     private enum DisplayState {
         case loading
         case usage(UsageSnapshot, Date)
@@ -296,6 +329,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     private let creditsItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private let updatedItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private let refreshItem = NSMenuItem(title: "", action: #selector(refreshNow), keyEquivalent: "r")
+    private let displayModeItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+    private var displayModeOptions: [NSMenuItem] = []
     private let chooseCLIItem = NSMenuItem(title: "", action: #selector(chooseCLI), keyEquivalent: "")
     private let quitItem = NSMenuItem(title: "", action: #selector(quitApp), keyEquivalent: "q")
     private let contentView = StatusContentView(frame: NSRect(x: 0, y: 0, width: 168, height: 24))
@@ -304,20 +339,33 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     private var refreshing = false
     private var activityTimer: Timer?
     private var lastRefreshStartedAt: Date?
+    private var preferredDisplayMode: StatusDisplayMode {
+        StatusDisplayMode(rawValue: UserDefaults.standard.integer(forKey: Self.displayModePreferenceKey))
+            ?? .automatic
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        statusItem = NSStatusBar.system.statusItem(withLength: 168)
+        statusItem = NSStatusBar.system.statusItem(withLength: 24)
         if let button = statusItem.button {
             button.title = ""
             button.imagePosition = .imageOnly
             button.imageScaling = .scaleNone
-            button.image = contentView.templateImage()
         }
         for item in [fiveHourItem, weeklyItem, creditsItem, updatedItem] {
             item.isEnabled = false
             menu.addItem(item)
         }
         menu.addItem(.separator())
+        let displayMenu = NSMenu()
+        for mode in StatusDisplayMode.allCases {
+            let item = NSMenuItem(title: "", action: #selector(selectDisplayMode(_:)), keyEquivalent: "")
+            item.target = self
+            item.tag = mode.rawValue
+            displayMenu.addItem(item)
+            displayModeOptions.append(item)
+        }
+        displayModeItem.submenu = displayMenu
+        menu.addItem(displayModeItem)
         refreshItem.target = self
         menu.addItem(refreshItem)
         chooseCLIItem.target = self
@@ -334,6 +382,10 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         NSWorkspace.shared.notificationCenter.addObserver(
             self, selector: #selector(applicationActivated),
             name: NSWorkspace.didActivateApplicationNotification, object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(screenParametersChanged),
+            name: NSApplication.didChangeScreenParametersNotification, object: nil
         )
         NotificationCenter.default.addObserver(self, selector: #selector(checkLanguage),
                                                name: NSLocale.currentLocaleDidChangeNotification, object: nil)
@@ -361,6 +413,13 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func applicationActivated() { refreshIfDue() }
+
+    @objc private func screenParametersChanged() { render() }
+
+    @objc private func selectDisplayMode(_ sender: NSMenuItem) {
+        UserDefaults.standard.set(sender.tag, forKey: Self.displayModePreferenceKey)
+        render()
+    }
 
     @objc private func checkLanguage() {
         let current = AppLanguage.current()
@@ -410,6 +469,12 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func render() {
+        updateDisplayMode()
+        displayModeItem.title = language.text("菜单栏显示", "選單列顯示", "Menu bar display")
+        for (mode, item) in zip(StatusDisplayMode.allCases, displayModeOptions) {
+            item.title = mode.title(in: language)
+            item.state = mode == preferredDisplayMode ? .on : .off
+        }
         refreshItem.title = language.text("立即刷新", "立即重新整理", "Refresh now")
         chooseCLIItem.title = language.text("选择 Codex CLI…", "選擇 Codex CLI…", "Choose Codex CLI…")
         quitItem.title = language.text("退出", "結束", "Quit")
@@ -458,6 +523,27 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.button?.image = contentView.templateImage()
     }
 
+    private func updateDisplayMode() {
+        let mode: StatusDisplayMode
+        if preferredDisplayMode == .automatic {
+            let screen = statusItem.button?.window?.screen ?? NSScreen.main
+            let width = screen?.frame.width ?? 1680
+            if width < 1280 {
+                mode = .iconOnly
+            } else if width < 1600 || screen?.auxiliaryTopRightArea != nil {
+                mode = .compact
+            } else {
+                mode = .full
+            }
+        } else {
+            mode = preferredDisplayMode
+        }
+        guard contentView.displayMode != mode || statusItem.length != mode.width else { return }
+        contentView.displayMode = mode
+        contentView.setFrameSize(NSSize(width: mode.width, height: 24))
+        statusItem.length = mode.width
+    }
+
     private func resetText(_ date: Date?) -> String {
         guard let date else { return "" }
         return language.text(" · 重置：", " · 重置：", " · Resets: ")
@@ -488,24 +574,29 @@ private enum CodexUsageMenu {
             for languageCode in ["en", "zh-Hans", "zh-Hant"] {
                 for (name, appearance) in [("light", NSAppearance.Name.aqua),
                                            ("dark", NSAppearance.Name.darkAqua)] {
-                    let view = StatusContentView(frame: NSRect(x: 0, y: 0, width: 168, height: 24))
-                    view.appearance = NSAppearance(named: appearance)
-                    view.usesWhiteForeground = true
-                    view.previewBackground = name == "light"
-                        ? NSColor(calibratedRed: 0.49, green: 0.64, blue: 0.16, alpha: 1)
-                        : NSColor(calibratedWhite: 0.16, alpha: 1)
-                    view.fiveHour = "45%"
-                    view.week = "91%"
-                    view.resets = "1"
-                    if let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 672, pixelsHigh: 96,
-                                                     bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
-                                                     isPlanar: false, colorSpaceName: .deviceRGB,
-                                                     bytesPerRow: 0, bitsPerPixel: 0) {
-                        bitmap.size = view.bounds.size
-                        view.cacheDisplay(in: view.bounds, to: bitmap)
-                        if let data = bitmap.representation(using: .png, properties: [:]) {
-                            try? data.write(to: URL(fileURLWithPath:
-                                "build/status-preview-\(languageCode)-\(name).png"))
+                    for mode in [StatusDisplayMode.full, .compact, .iconOnly] {
+                        let view = StatusContentView(frame: NSRect(x: 0, y: 0,
+                                                                   width: mode.width, height: 24))
+                        view.displayMode = mode
+                        view.appearance = NSAppearance(named: appearance)
+                        view.usesWhiteForeground = true
+                        view.previewBackground = name == "light"
+                            ? NSColor(calibratedRed: 0.49, green: 0.64, blue: 0.16, alpha: 1)
+                            : NSColor(calibratedWhite: 0.16, alpha: 1)
+                        view.fiveHour = "45%"
+                        view.week = "91%"
+                        view.resets = "1"
+                        if let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil,
+                                                         pixelsWide: Int(mode.width * 4), pixelsHigh: 96,
+                                                         bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
+                                                         isPlanar: false, colorSpaceName: .deviceRGB,
+                                                         bytesPerRow: 0, bitsPerPixel: 0) {
+                            bitmap.size = view.bounds.size
+                            view.cacheDisplay(in: view.bounds, to: bitmap)
+                            if let data = bitmap.representation(using: .png, properties: [:]) {
+                                try? data.write(to: URL(fileURLWithPath:
+                                    "build/status-preview-\(languageCode)-\(name)-\(mode).png"))
+                            }
                         }
                     }
                 }
