@@ -67,9 +67,9 @@ private enum UsageError: LocalizedError {
         let language = AppLanguage.current()
         switch self {
         case .missingCodex:
-            return language.text("未找到 Codex CLI。请先安装并登录 Codex。",
-                                 "找不到 Codex CLI。請先安裝並登入 Codex。",
-                                 "Codex CLI was not found. Install it and sign in first.")
+            return language.text("未找到 Codex CLI。请在菜单中选择 Codex CLI，或先安装并登录。",
+                                 "找不到 Codex CLI。請在選單中選擇 Codex CLI，或先安裝並登入。",
+                                 "Codex CLI was not found. Choose it from the menu, or install and sign in.")
         case .failedToStart(let message):
             return language.text("无法启动 Codex：", "無法啟動 Codex：", "Could not start Codex: ") + message
         case .noResponse:
@@ -84,16 +84,46 @@ private enum UsageError: LocalizedError {
 }
 
 private final class CodexUsageClient {
-    private func executableURL() -> URL? {
-        let candidates = [
-            "/usr/local/bin/codex",
-            "/opt/homebrew/bin/codex",
-            "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex",
-            "/Applications/Codex.app/Contents/Resources/codex-cli/bin/codex"
-        ]
-            + (ProcessInfo.processInfo.environment["PATH"] ?? "")
-                .split(separator: ":").map { "\($0)/codex" }
-        return candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }).map(URL.init(fileURLWithPath:))
+    static let preferredExecutablePathKey = "CodexCLIExecutablePath"
+
+    func executableURL() -> URL? {
+        let fileManager = FileManager.default
+        let home = fileManager.homeDirectoryForCurrentUser
+        var candidates: [URL] = []
+
+        if let preferred = UserDefaults.standard.string(forKey: Self.preferredExecutablePathKey) {
+            candidates.append(URL(fileURLWithPath: preferred))
+        }
+
+        let applicationRoots = [URL(fileURLWithPath: "/Applications", isDirectory: true),
+                                home.appendingPathComponent("Applications", isDirectory: true)]
+        for root in applicationRoots {
+            for name in ["ChatGPT.app", "Codex.app"] {
+                let app = root.appendingPathComponent(name, isDirectory: true)
+                candidates.append(app.appendingPathComponent(
+                    "Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex"))
+                candidates.append(app.appendingPathComponent("Contents/Resources/codex-cli/bin/codex"))
+            }
+        }
+
+        let homeBinDirectories = [".local/bin", ".codex/bin", ".npm-global/bin", ".bun/bin",
+                                  ".volta/bin", ".asdf/shims", ".mise/shims", "Library/pnpm"]
+        candidates += homeBinDirectories.map {
+            home.appendingPathComponent($0, isDirectory: true).appendingPathComponent("codex")
+        }
+        let nvmVersions = home.appendingPathComponent(".nvm/versions/node", isDirectory: true)
+        if let versions = try? fileManager.contentsOfDirectory(at: nvmVersions,
+                                                               includingPropertiesForKeys: nil) {
+            candidates += versions.map { $0.appendingPathComponent("bin/codex") }
+        }
+
+        candidates += ["/opt/homebrew/bin/codex", "/usr/local/bin/codex"]
+            .map(URL.init(fileURLWithPath:))
+        candidates += (ProcessInfo.processInfo.environment["PATH"] ?? "")
+            .split(separator: ":")
+            .map { URL(fileURLWithPath: String($0), isDirectory: true).appendingPathComponent("codex") }
+
+        return candidates.first { fileManager.isExecutableFile(atPath: $0.path) }
     }
 
     func fetch() throws -> UsageSnapshot {
@@ -101,6 +131,11 @@ private final class CodexUsageClient {
         let process = Process()
         process.executableURL = executable
         process.arguments = ["app-server"]
+        var environment = ProcessInfo.processInfo.environment
+        let searchPaths = [executable.deletingLastPathComponent().path, "/opt/homebrew/bin",
+                           "/usr/local/bin", "/usr/bin", "/bin"]
+        environment["PATH"] = (searchPaths + [environment["PATH"] ?? ""]).joined(separator: ":")
+        process.environment = environment
         let input = Pipe(), output = Pipe(), errors = Pipe()
         process.standardInput = input
         process.standardOutput = output
@@ -261,6 +296,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     private let creditsItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private let updatedItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private let refreshItem = NSMenuItem(title: "", action: #selector(refreshNow), keyEquivalent: "r")
+    private let chooseCLIItem = NSMenuItem(title: "", action: #selector(chooseCLI), keyEquivalent: "")
     private let quitItem = NSMenuItem(title: "", action: #selector(quitApp), keyEquivalent: "q")
     private let contentView = StatusContentView(frame: NSRect(x: 0, y: 0, width: 168, height: 24))
     private var language = AppLanguage.current()
@@ -284,6 +320,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
         refreshItem.target = self
         menu.addItem(refreshItem)
+        chooseCLIItem.target = self
+        menu.addItem(chooseCLIItem)
         quitItem.target = self
         menu.addItem(quitItem)
         statusItem.menu = menu
@@ -350,8 +388,30 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    @objc private func chooseCLI() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.showsHiddenFiles = true
+        panel.treatsFilePackagesAsDirectories = true
+        panel.message = language.text("请选择 codex 可执行文件", "請選擇 codex 執行檔",
+                                      "Choose the codex executable")
+        NSApplication.shared.activate(ignoringOtherApps: true)
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard FileManager.default.isExecutableFile(atPath: url.path) else {
+            let alert = NSAlert()
+            alert.messageText = language.text("所选文件无法执行", "所選檔案無法執行",
+                                              "The selected file is not executable")
+            alert.runModal()
+            return
+        }
+        UserDefaults.standard.set(url.path, forKey: CodexUsageClient.preferredExecutablePathKey)
+        refreshNow()
+    }
+
     private func render() {
         refreshItem.title = language.text("立即刷新", "立即重新整理", "Refresh now")
+        chooseCLIItem.title = language.text("选择 Codex CLI…", "選擇 Codex CLI…", "Choose Codex CLI…")
         quitItem.title = language.text("退出", "結束", "Quit")
 
         switch displayState {
@@ -419,6 +479,10 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
 @main
 private enum CodexUsageMenu {
     static func main() {
+        if CommandLine.arguments.contains("--diagnose-cli") {
+            print(CodexUsageClient().executableURL()?.path ?? "Codex CLI not found")
+            return
+        }
         let app = NSApplication.shared
         if CommandLine.arguments.contains("--render-preview") {
             for languageCode in ["en", "zh-Hans", "zh-Hant"] {

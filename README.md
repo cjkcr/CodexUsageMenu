@@ -15,7 +15,7 @@ macOS 菜单栏小工具，通过已登录的 Codex CLI 查询 ChatGPT Codex 用
 open build/CodexUsageMenu.app
 ```
 
-程序优先查找 `/usr/local/bin/codex` 和 `/opt/homebrew/bin/codex`，然后查找 ChatGPT/Codex 应用内的 Codex CLI 和 `PATH`。首次运行可先用 `codex login` 登录。菜单栏出现 `Codex —` 时，点击图标可查看错误并手动刷新。
+程序自动查找 ChatGPT/Codex 应用内的 Codex CLI、`~/.local/bin` 等常见用户安装位置、Node 版本管理器目录、Homebrew 路径和 `PATH`。菜单栏 App 不一定继承终端的 `PATH`；若仍找不到，请在终端运行 `command -v codex`，然后在菜单栏下拉菜单选择“选择 Codex CLI…”，指定该文件。所选路径只保存在本机。可运行 `/Applications/CodexUsageMenu.app/Contents/MacOS/CodexUsageMenu --diagnose-cli` 查看 App 实际找到的路径。首次运行可先用 `codex login` 登录。菜单栏出现 `Codex —` 时，点击图标可查看错误并手动刷新。
 
 ## 安装包
 
