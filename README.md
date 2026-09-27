@@ -19,6 +19,10 @@ open build/CodexUsageMenu.app
 
 ## 安装包
 
-运行 `./package.sh` 会构建适用于 Apple Silicon 和 Intel、最低部署目标为 macOS 13 的通用应用，并在 `dist/` 中生成 DMG 和 PKG。打开 DMG 后将应用拖入“应用程序”；PKG 可直接运行安装。当前环境没有 Developer ID 证书，应用仅进行本地签名，安装包未签名或公证；在其他 Mac 上下载后可能需要从 Finder 中右键选择“打开”并确认。
+从 [GitHub Releases](https://github.com/cjkcr/CodexUsageMenu/releases/latest) 下载最新 DMG。打开 DMG，将应用拖入“应用程序”。需要 macOS 13 或更新版本，以及已登录的 Codex CLI 或附带 Codex CLI 的 ChatGPT/Codex 应用。
+
+当前没有 Apple Developer ID 证书，应用仅进行本地签名，DMG 未经公证。首次打开如被 macOS 阻止，先尝试打开应用，然后进入“系统设置 → 隐私与安全性”，在安全性提示处选择“仍要打开”。请只从此项目的 Releases 页面下载。
+
+本地运行 `./package.sh` 会生成 Apple Silicon 与 Intel 通用 DMG 和 PKG，文件位于 `dist/`。`VERSION` 是应用和安装包的版本来源。每次完成代码更新并提交后，运行 `./release.sh`：脚本将补丁版本号加一，创建并推送 Git 标签；GitHub Actions 随后构建 DMG 并发布新版本。首次版本是 `v1.0.0`。
 
 数据来自 Codex app-server 的 `account/rateLimits/read`。这里的“重置次数”指服务端 `rateLimitResetCredits.availableCount`，不会自动使用重置额度。剩余百分比根据 `100 - usedPercent` 计算；没有返回的数据以 `—` 表示。刷新间隔为 60 秒。

@@ -1,0 +1,43 @@
+name: Release DMG
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check version
+        shell: bash
+        run: |
+          version="$(tr -d '\r\n' < VERSION)"
+          test "${GITHUB_REF_NAME}" = "v${version}"
+      - name: Build universal DMG
+        run: ./package.sh
+      - name: Verify and checksum
+        shell: bash
+        run: |
+          version="$(tr -d '\r\n' < VERSION)"
+          dmg="dist/CodexUsageMenu-${version}.dmg"
+          test "$(lipo -archs build/CodexUsageMenu.app/Contents/MacOS/CodexUsageMenu)" = "x86_64 arm64" || \
+            test "$(lipo -archs build/CodexUsageMenu.app/Contents/MacOS/CodexUsageMenu)" = "arm64 x86_64"
+          codesign --verify --deep --strict build/CodexUsageMenu.app
+          hdiutil verify "$dmg"
+          (cd dist && shasum -a 256 "CodexUsageMenu-${version}.dmg" > "CodexUsageMenu-${version}.sha256")
+      - name: Publish GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="$(tr -d '\r\n' < VERSION)"
+          gh release create "v${version}" \
+            "dist/CodexUsageMenu-${version}.dmg" \
+            "dist/CodexUsageMenu-${version}.sha256" \
+            --verify-tag --title "Codex Usage Menu v${version}" \
+            --generate-notes --notes "$(cat .github/release-notes.md)"
