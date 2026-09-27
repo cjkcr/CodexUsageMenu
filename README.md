@@ -15,6 +15,10 @@ macOS 菜单栏小工具，每分钟通过已登录的 Codex CLI 查询一次 Ch
 open build/CodexUsageMenu.app
 ```
 
-程序优先查找 `/usr/local/bin/codex` 和 `/opt/homebrew/bin/codex`，然后查找 `PATH`。首次运行可先用 `codex login` 登录。菜单栏出现 `Codex —` 时，点击图标可查看错误并手动刷新。
+程序优先查找 `/usr/local/bin/codex` 和 `/opt/homebrew/bin/codex`，然后查找 ChatGPT/Codex 应用内的 Codex CLI 和 `PATH`。首次运行可先用 `codex login` 登录。菜单栏出现 `Codex —` 时，点击图标可查看错误并手动刷新。
+
+## 安装包
+
+运行 `./package.sh` 会构建适用于 Apple Silicon 和 Intel、最低部署目标为 macOS 13 的通用应用，并在 `dist/` 中生成 DMG 和 PKG。打开 DMG 后将应用拖入“应用程序”；PKG 可直接运行安装。当前环境没有 Developer ID 证书，应用仅进行本地签名，安装包未签名或公证；在其他 Mac 上下载后可能需要从 Finder 中右键选择“打开”并确认。
 
 数据来自 Codex app-server 的 `account/rateLimits/read`。这里的“重置次数”指服务端 `rateLimitResetCredits.availableCount`，不会自动使用重置额度。剩余百分比根据 `100 - usedPercent` 计算；没有返回的数据以 `—` 表示。刷新间隔为 60 秒。

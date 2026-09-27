@@ -85,7 +85,12 @@ private enum UsageError: LocalizedError {
 
 private final class CodexUsageClient {
     private func executableURL() -> URL? {
-        let candidates = ["/usr/local/bin/codex", "/opt/homebrew/bin/codex"]
+        let candidates = [
+            "/usr/local/bin/codex",
+            "/opt/homebrew/bin/codex",
+            "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex",
+            "/Applications/Codex.app/Contents/Resources/codex-cli/bin/codex"
+        ]
             + (ProcessInfo.processInfo.environment["PATH"] ?? "")
                 .split(separator: ":").map { "\($0)/codex" }
         return candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }).map(URL.init(fileURLWithPath:))
