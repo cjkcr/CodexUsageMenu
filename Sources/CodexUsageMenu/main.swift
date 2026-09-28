@@ -247,7 +247,7 @@ private enum StatusDisplayMode: Int, CaseIterable {
 
     var width: CGFloat {
         switch self {
-        case .automatic, .full: return 168
+        case .automatic, .full: return 135
         case .compact: return 116
         case .iconOnly: return 24
         }
@@ -302,7 +302,7 @@ private final class StatusContentView: NSView {
         let compact = displayMode == .compact
         let columns: [(String, String, CGFloat, CGFloat)] = compact
             ? [("5 H", fiveHour, 0, 29), ("WEEK", week, 30, 35)]
-            : [("5 H", fiveHour, 3, 39), ("WEEK", week, 45, 45)]
+            : [("5 H", fiveHour, 3, 32), ("WEEK", week, 41.75, 34)]
         let labelFont = NSFont.systemFont(ofSize: 7, weight: .medium)
         let valueFont = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .semibold)
         let foreground: NSColor = usesWhiteForeground ? .white : .black
@@ -314,11 +314,11 @@ private final class StatusContentView: NSView {
         }
         drawText("↻\(resets)", font: compact ? NSFont.systemFont(ofSize: 11, weight: .medium)
                                            : NSFont.menuBarFont(ofSize: 0),
-                 color: foreground, in: compact ? NSRect(x: 66, y: 3, width: 25, height: 18)
-                                                : NSRect(x: 92, y: 3, width: 39, height: 18))
+                 color: foreground, in: compact ? NSRect(x: 66, y: 0, width: 25, height: 18)
+                                                : NSRect(x: 74.75, y: 0, width: 27, height: 18))
         (usesWhiteForeground ? whiteCodexIcon : codexIcon)?
             .draw(in: compact ? NSRect(x: 92, y: 1, width: 22, height: 22)
-                              : NSRect(x: 136, y: -1, width: 26, height: 26),
+                              : NSRect(x: 106.75, y: -1.25, width: 24, height: 24),
                   from: .zero, operation: .sourceOver, fraction: 1)
     }
 
@@ -414,7 +414,7 @@ private final class MenuInfoView: NSView {
     }
 
     init() {
-        super.init(frame: NSRect(x: 0, y: 0, width: 360, height: 22))
+        super.init(frame: NSRect(x: 0, y: 0, width: 300, height: 22))
         label.translatesAutoresizingMaskIntoConstraints = false
         label.font = NSFont.menuFont(ofSize: 0)
         label.textColor = .labelColor
