@@ -308,9 +308,9 @@ private final class StatusContentView: NSView {
         let foreground: NSColor = usesWhiteForeground ? .white : .black
         for (label, value, x, width) in columns {
             drawText(label, font: labelFont, color: foreground,
-                     in: NSRect(x: x, y: 12, width: width, height: 8))
+                     in: NSRect(x: x, y: 12, width: width, height: 8), alignment: .left)
             drawText(value, font: valueFont, color: foreground,
-                     in: NSRect(x: x, y: 1, width: width, height: 12))
+                     in: NSRect(x: x, y: 1, width: width, height: 12), alignment: .left)
         }
         drawText("↻\(resets)", font: compact ? NSFont.systemFont(ofSize: 11, weight: .medium)
                                            : NSFont.menuBarFont(ofSize: 0),
@@ -333,9 +333,10 @@ private final class StatusContentView: NSView {
         return image
     }
 
-    private func drawText(_ text: String, font: NSFont, color: NSColor, in rect: NSRect) {
+    private func drawText(_ text: String, font: NSFont, color: NSColor, in rect: NSRect,
+                          alignment: NSTextAlignment = .center) {
         let style = NSMutableParagraphStyle()
-        style.alignment = .center
+        style.alignment = alignment
         (text as NSString).draw(in: rect, withAttributes: [
             .font: font,
             .foregroundColor: color,
@@ -345,7 +346,97 @@ private final class StatusContentView: NSView {
 
 }
 
-private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+private final class DashboardMetricCard: NSView {
+    private let titleField = NSTextField(labelWithString: "")
+    private let symbolView = NSImageView()
+    let valueField = NSTextField(labelWithString: "—")
+
+    init(title: String, symbolName: String) {
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.cornerRadius = 14
+        layer?.borderWidth = 0.5
+
+        titleField.stringValue = title
+        titleField.font = .systemFont(ofSize: 10, weight: .semibold)
+        titleField.textColor = .secondaryLabelColor
+        symbolView.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: title)?
+            .withSymbolConfiguration(.init(pointSize: 11, weight: .semibold))
+        symbolView.contentTintColor = .secondaryLabelColor
+        symbolView.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            symbolView.widthAnchor.constraint(equalToConstant: 14),
+            symbolView.heightAnchor.constraint(equalToConstant: 14)
+        ])
+
+        let heading = NSStackView(views: [symbolView, titleField])
+        heading.orientation = .horizontal
+        heading.alignment = .centerY
+        heading.spacing = 6
+        valueField.font = .monospacedDigitSystemFont(ofSize: 25, weight: .semibold)
+        valueField.textColor = .labelColor
+        let content = NSStackView(views: [heading, valueField])
+        content.orientation = .vertical
+        content.alignment = .leading
+        content.spacing = 7
+        content.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(content)
+        NSLayoutConstraint.activate([
+            content.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
+            content.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -12),
+            content.centerYAnchor.constraint(equalTo: centerYAnchor)
+        ])
+        updateColors()
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updateColors()
+    }
+
+    private func updateColors() {
+        layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.74).cgColor
+        layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.42).cgColor
+    }
+}
+
+private final class MenuInfoView: NSView {
+    private let label = NSTextField(labelWithString: "")
+
+    var text: String {
+        get { label.stringValue }
+        set {
+            label.stringValue = newValue
+            label.toolTip = newValue.isEmpty ? nil : newValue
+        }
+    }
+
+    init() {
+        super.init(frame: NSRect(x: 0, y: 0, width: 360, height: 22))
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.font = NSFont.menuFont(ofSize: 0)
+        label.textColor = .labelColor
+        label.lineBreakMode = .byTruncatingTail
+        label.maximumNumberOfLines = 1
+        addSubview(label)
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
+            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
+            label.centerYAnchor.constraint(equalTo: centerYAnchor)
+        ])
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        label.textColor = .labelColor
+    }
+}
+
+private final class AppDelegate: NSObject, NSApplicationDelegate {
     private static let displayModePreferenceKey = "StatusDisplayMode"
 
     private enum DisplayState {
@@ -361,6 +452,10 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     private let weeklyItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private let creditsItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private let updatedItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+    private let fiveHourInfo = MenuInfoView()
+    private let weeklyInfo = MenuInfoView()
+    private let creditsInfo = MenuInfoView()
+    private let updatedInfo = MenuInfoView()
     private let refreshItem = NSMenuItem(title: "", action: #selector(refreshNow), keyEquivalent: "r")
     private let displayModeItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private var displayModeOptions: [NSMenuItem] = []
@@ -368,10 +463,17 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     private let quitItem = NSMenuItem(title: "", action: #selector(quitApp), keyEquivalent: "q")
     private let contentView = StatusContentView(frame: NSRect(x: 0, y: 0, width: 168, height: 24))
     private var dashboardWindow: NSWindow?
-    private let dashboardUsage = NSTextField(labelWithString: "")
     private let dashboardStatus = NSTextField(wrappingLabelWithString: "")
     private let dashboardPlacement = NSTextField(wrappingLabelWithString: "")
     private let dashboardMode = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let dashboardModeLabel = NSTextField(labelWithString: "")
+    private let dashboardRefreshButton = NSButton(title: "", target: nil, action: nil)
+    private let dashboardChooseCLIButton = NSButton(title: "", target: nil, action: nil)
+    private let dashboardHelp = NSTextField(wrappingLabelWithString: "")
+    private let dashboardStatusDot = NSView()
+    private let dashboardFiveHour = DashboardMetricCard(title: "5 H", symbolName: "clock")
+    private let dashboardWeek = DashboardMetricCard(title: "WEEK", symbolName: "calendar")
+    private let dashboardResets = DashboardMetricCard(title: "RESETS", symbolName: "arrow.clockwise")
     private var language = AppLanguage.current()
     private var displayState: DisplayState = .loading
     private var refreshing = false
@@ -391,7 +493,12 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
             button.imagePosition = .imageOnly
             button.imageScaling = .scaleNone
         }
-        for item in [fiveHourItem, weeklyItem, creditsItem, updatedItem] {
+        menu.autoenablesItems = false
+        for (item, infoView) in zip(
+            [fiveHourItem, weeklyItem, creditsItem, updatedItem],
+            [fiveHourInfo, weeklyInfo, creditsInfo, updatedInfo]
+        ) {
+            item.view = infoView
             item.isEnabled = false
             menu.addItem(item)
         }
@@ -447,10 +554,6 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         return true
     }
 
-    func windowWillClose(_ notification: Notification) {
-        dashboardWindow = nil
-    }
-
     @objc private func showDashboardNotification() {
         showDashboard()
     }
@@ -461,62 +564,139 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
             NSApplication.shared.activate(ignoringOtherApps: true)
             return
         }
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 420, height: 310),
-                              styleMask: [.titled, .closable, .miniaturizable],
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 460, height: 338),
+                              styleMask: [.titled, .closable, .fullSizeContentView],
                               backing: .buffered, defer: false)
         window.title = "Codex Usage Menu"
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        window.isMovableByWindowBackground = true
+        window.backgroundColor = .clear
+        window.isOpaque = false
         window.center()
-        window.delegate = self
+        window.isReleasedWhenClosed = false
+        window.standardWindowButton(.miniaturizeButton)?.isHidden = true
+        window.standardWindowButton(.zoomButton)?.isHidden = true
+
+        let backdrop = NSVisualEffectView()
+        backdrop.material = .underWindowBackground
+        backdrop.blendingMode = .behindWindow
+        backdrop.state = .active
+        window.contentView = backdrop
+
         let root = NSStackView()
         root.orientation = .vertical
         root.alignment = .leading
-        root.spacing = 13
-        root.edgeInsets = NSEdgeInsets(top: 22, left: 24, bottom: 22, right: 24)
+        root.spacing = 14
         root.translatesAutoresizingMaskIntoConstraints = false
-        let title = NSTextField(labelWithString: "Codex Usage Menu")
-        title.font = .boldSystemFont(ofSize: 19)
-        root.addArrangedSubview(title)
-        dashboardUsage.font = .monospacedDigitSystemFont(ofSize: 15, weight: .medium)
-        root.addArrangedSubview(dashboardUsage)
-        dashboardStatus.maximumNumberOfLines = 3
-        root.addArrangedSubview(dashboardStatus)
-        let modeRow = NSStackView()
-        modeRow.orientation = .horizontal
-        modeRow.spacing = 10
-        let modeLabel = NSTextField(labelWithString: "")
-        modeLabel.identifier = NSUserInterfaceItemIdentifier("displayModeLabel")
-        modeRow.addArrangedSubview(modeLabel)
+
+        let appIcon = NSImageView(image: NSApplication.shared.applicationIconImage)
+        appIcon.imageScaling = .scaleProportionallyUpOrDown
+        appIcon.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            appIcon.widthAnchor.constraint(equalToConstant: 38),
+            appIcon.heightAnchor.constraint(equalToConstant: 38)
+        ])
+        let title = NSTextField(labelWithString: "Codex Usage")
+        title.font = .systemFont(ofSize: 21, weight: .semibold)
+        dashboardStatus.font = .systemFont(ofSize: 11, weight: .regular)
+        dashboardStatus.textColor = .secondaryLabelColor
+        dashboardStatus.maximumNumberOfLines = 1
+        let titleStack = NSStackView(views: [title, dashboardStatus])
+        titleStack.orientation = .vertical
+        titleStack.alignment = .leading
+        titleStack.spacing = 2
+        let headerSpacer = NSView()
+        headerSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""
+        let versionLabel = NSTextField(labelWithString: "v\(version)")
+        versionLabel.font = .monospacedDigitSystemFont(ofSize: 10, weight: .medium)
+        versionLabel.textColor = .tertiaryLabelColor
+        let header = NSStackView(views: [appIcon, titleStack, headerSpacer, versionLabel])
+        header.orientation = .horizontal
+        header.alignment = .centerY
+        header.spacing = 11
+        root.addArrangedSubview(header)
+
+        let metrics = NSStackView(views: [dashboardFiveHour, dashboardWeek, dashboardResets])
+        metrics.orientation = .horizontal
+        metrics.distribution = .fillEqually
+        metrics.spacing = 10
+        metrics.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([metrics.heightAnchor.constraint(equalToConstant: 86)])
+        root.addArrangedSubview(metrics)
+
+        let settings = NSBox()
+        settings.boxType = .custom
+        settings.cornerRadius = 12
+        settings.borderWidth = 0.5
+        settings.borderColor = .separatorColor.withAlphaComponent(0.45)
+        settings.fillColor = .controlBackgroundColor.withAlphaComponent(0.68)
+        settings.translatesAutoresizingMaskIntoConstraints = false
+        let modeSpacer = NSView()
+        modeSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        dashboardMode.font = .systemFont(ofSize: 12, weight: .medium)
         dashboardMode.target = self
         dashboardMode.action = #selector(selectDashboardMode(_:))
-        modeRow.addArrangedSubview(dashboardMode)
-        root.addArrangedSubview(modeRow)
-        dashboardPlacement.font = .systemFont(ofSize: 11)
-        dashboardPlacement.textColor = .secondaryLabelColor
-        root.addArrangedSubview(dashboardPlacement)
-        let actions = NSStackView()
-        actions.orientation = .horizontal
-        actions.spacing = 10
-        for (identifier, action) in [("refresh", #selector(refreshNow)),
-                                     ("chooseCLI", #selector(chooseCLI))] {
-            let button = NSButton(title: "", target: self, action: action)
-            button.identifier = NSUserInterfaceItemIdentifier(identifier)
-            actions.addArrangedSubview(button)
-        }
-        root.addArrangedSubview(actions)
-        let help = NSTextField(wrappingLabelWithString: "")
-        help.identifier = NSUserInterfaceItemIdentifier("statusHelp")
-        help.font = .systemFont(ofSize: 11)
-        help.textColor = .secondaryLabelColor
-        root.addArrangedSubview(help)
-        window.contentView?.addSubview(root)
-        if let content = window.contentView {
+        dashboardMode.translatesAutoresizingMaskIntoConstraints = false
+        dashboardMode.widthAnchor.constraint(equalToConstant: 108).isActive = true
+        dashboardRefreshButton.target = self
+        dashboardRefreshButton.action = #selector(refreshNow)
+        dashboardRefreshButton.bezelStyle = .rounded
+        dashboardRefreshButton.image = NSImage(systemSymbolName: "arrow.clockwise",
+                                                accessibilityDescription: "Refresh")
+        dashboardRefreshButton.imagePosition = .imageLeading
+        dashboardChooseCLIButton.target = self
+        dashboardChooseCLIButton.action = #selector(chooseCLI)
+        dashboardChooseCLIButton.bezelStyle = .rounded
+        let settingsRow = NSStackView(views: [dashboardModeLabel, modeSpacer, dashboardMode,
+                                              dashboardRefreshButton, dashboardChooseCLIButton])
+        settingsRow.orientation = .horizontal
+        settingsRow.alignment = .centerY
+        settingsRow.spacing = 9
+        settingsRow.translatesAutoresizingMaskIntoConstraints = false
+        settings.contentView?.addSubview(settingsRow)
+        if let settingsContent = settings.contentView {
             NSLayoutConstraint.activate([
-                root.leadingAnchor.constraint(equalTo: content.leadingAnchor),
-                root.trailingAnchor.constraint(equalTo: content.trailingAnchor),
-                root.topAnchor.constraint(equalTo: content.topAnchor),
-                root.bottomAnchor.constraint(lessThanOrEqualTo: content.bottomAnchor)
+                settingsRow.leadingAnchor.constraint(equalTo: settingsContent.leadingAnchor, constant: 13),
+                settingsRow.trailingAnchor.constraint(equalTo: settingsContent.trailingAnchor, constant: -13),
+                settingsRow.centerYAnchor.constraint(equalTo: settingsContent.centerYAnchor),
+                settings.heightAnchor.constraint(equalToConstant: 48)
             ])
         }
+        root.addArrangedSubview(settings)
+
+        dashboardStatusDot.wantsLayer = true
+        dashboardStatusDot.layer?.cornerRadius = 4
+        dashboardStatusDot.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            dashboardStatusDot.widthAnchor.constraint(equalToConstant: 8),
+            dashboardStatusDot.heightAnchor.constraint(equalToConstant: 8)
+        ])
+        dashboardPlacement.font = .systemFont(ofSize: 11, weight: .medium)
+        dashboardPlacement.textColor = .secondaryLabelColor
+        dashboardPlacement.maximumNumberOfLines = 1
+        let statusRow = NSStackView(views: [dashboardStatusDot, dashboardPlacement])
+        statusRow.orientation = .horizontal
+        statusRow.alignment = .centerY
+        statusRow.spacing = 7
+        root.addArrangedSubview(statusRow)
+
+        dashboardHelp.font = .systemFont(ofSize: 10.5)
+        dashboardHelp.textColor = .tertiaryLabelColor
+        dashboardHelp.maximumNumberOfLines = 2
+        root.addArrangedSubview(dashboardHelp)
+
+        backdrop.addSubview(root)
+        NSLayoutConstraint.activate([
+            root.leadingAnchor.constraint(equalTo: backdrop.leadingAnchor, constant: 22),
+            root.trailingAnchor.constraint(equalTo: backdrop.trailingAnchor, constant: -22),
+            root.topAnchor.constraint(equalTo: backdrop.topAnchor, constant: 45),
+            header.widthAnchor.constraint(equalTo: root.widthAnchor),
+            metrics.widthAnchor.constraint(equalTo: root.widthAnchor),
+            settings.widthAnchor.constraint(equalTo: root.widthAnchor),
+            dashboardHelp.widthAnchor.constraint(equalTo: root.widthAnchor)
+        ])
         dashboardWindow = window
         updateDashboard()
         window.makeKeyAndOrderFront(nil)
@@ -529,18 +709,24 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     }
 
     private func updateDashboard() {
-        guard let root = dashboardWindow?.contentView?.subviews.first as? NSStackView else { return }
+        guard dashboardWindow != nil else { return }
         dashboardWindow?.title = "Codex Usage Menu \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")"
         switch displayState {
         case .loading:
-            dashboardUsage.stringValue = language.text("正在读取用量…", "正在讀取用量…", "Loading usage…")
-            dashboardStatus.stringValue = ""
+            dashboardFiveHour.valueField.stringValue = "—"
+            dashboardWeek.valueField.stringValue = "—"
+            dashboardResets.valueField.stringValue = "—"
+            dashboardStatus.stringValue = language.text("正在同步用量…", "正在同步用量…", "Syncing usage…")
         case .usage(let usage, let updatedAt):
-            dashboardUsage.stringValue = "5 H \(usage.fiveHour.map { "\($0.remaining)%" } ?? "—")    WEEK \(usage.weekly.map { "\($0.remaining)%" } ?? "—")    ↻\(usage.resetCredits.map(String.init) ?? "—")"
+            dashboardFiveHour.valueField.stringValue = usage.fiveHour.map { "\($0.remaining)%" } ?? "—"
+            dashboardWeek.valueField.stringValue = usage.weekly.map { "\($0.remaining)%" } ?? "—"
+            dashboardResets.valueField.stringValue = usage.resetCredits.map(String.init) ?? "—"
             dashboardStatus.stringValue = language.text("更新于 ", "更新於 ", "Updated ")
                 + formattedDate(updatedAt, dateStyle: .none, timeStyle: .short)
         case .failure(let error):
-            dashboardUsage.stringValue = language.text("用量读取失败", "用量讀取失敗", "Could not load usage")
+            dashboardFiveHour.valueField.stringValue = "—"
+            dashboardWeek.valueField.stringValue = "—"
+            dashboardResets.valueField.stringValue = "—"
             dashboardStatus.stringValue = error.localizedDescription
         }
         dashboardMode.removeAllItems()
@@ -551,34 +737,27 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
            let safeArea = screen.auxiliaryTopRightArea,
            buttonWindow.frame.minX < safeArea.minX {
             dashboardPlacement.stringValue = language.text(
-                "菜单栏图标落在刘海左侧或遮挡区域。请先关闭其他菜单栏项目腾出空间。",
-                "選單列圖示落在瀏海左側或遮擋區域。請先關閉其他選單列項目騰出空間。",
-                "The menu bar icon is left of the camera safe area. Free space by closing other menu bar items."
+                "菜单栏空间不足，请关闭其他项目腾出空间",
+                "選單列空間不足，請關閉其他項目騰出空間",
+                "Menu bar space is limited — close other items to make room"
             )
+            dashboardStatusDot.layer?.backgroundColor = NSColor.systemOrange.cgColor
         } else {
             dashboardPlacement.stringValue = language.text(
-                "菜单栏图标已创建。", "選單列圖示已建立。", "Menu bar icon created."
+                "菜单栏运行中", "選單列執行中", "Running in the menu bar"
             )
+            dashboardStatusDot.layer?.backgroundColor = NSColor.systemGreen.cgColor
         }
-        if let modeRow = root.arrangedSubviews.first(where: { $0 is NSStackView }) as? NSStackView,
-           let label = modeRow.arrangedSubviews.first as? NSTextField {
-            label.stringValue = language.text("菜单栏显示", "選單列顯示", "Menu bar display")
-        }
-        for button in root.arrangedSubviews.compactMap({ $0 as? NSStackView }).flatMap(\.arrangedSubviews).compactMap({ $0 as? NSButton }) {
-            switch button.identifier?.rawValue {
-            case "refresh": button.title = language.text("立即刷新", "立即重新整理", "Refresh now")
-            case "chooseCLI": button.title = language.text("选择 Codex CLI…", "選擇 Codex CLI…", "Choose Codex CLI…")
-            default: break
-            }
-        }
-        if let help = root.arrangedSubviews.compactMap({ $0 as? NSTextField })
-            .first(where: { $0.identifier?.rawValue == "statusHelp" }) {
-            help.stringValue = language.text(
-                "如果刘海遮住菜单栏图标，请先关闭其他菜单栏项目腾出空间；图标出现后，可按住 Command 将它拖到右侧。此窗口可从 Dock 重新打开。",
-                "若瀏海遮住選單列圖示，請先關閉其他選單列項目騰出空間；圖示出現後，可按住 Command 將它拖到右側。此視窗可從 Dock 重新開啟。",
-                "If the camera housing hides the menu bar icon, free space by closing other menu bar items. Once visible, Command-drag it right. Reopen this window from the Dock."
-            )
-        }
+        dashboardModeLabel.stringValue = language.text("菜单栏显示", "選單列顯示", "Menu bar display")
+        dashboardRefreshButton.title = language.text("刷新", "重新整理", "Refresh")
+        dashboardRefreshButton.toolTip = language.text("立即刷新用量", "立即重新整理用量", "Refresh usage now")
+        dashboardChooseCLIButton.title = language.text("选择 CLI…", "選擇 CLI…", "Choose CLI…")
+        dashboardChooseCLIButton.isHidden = client.executableURL() != nil
+        dashboardHelp.stringValue = language.text(
+            "关闭窗口后仍会在菜单栏运行。需要窗口时，从“应用程序”再次打开。",
+            "關閉視窗後仍會在選單列執行。需要視窗時，從「應用程式」再次開啟。",
+            "Closing this window keeps the menu bar item running. Reopen it from Applications."
+        )
     }
 
     private func refreshIfDue() {
@@ -661,6 +840,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         }
         refreshItem.title = language.text("立即刷新", "立即重新整理", "Refresh now")
         chooseCLIItem.title = language.text("选择 Codex CLI…", "選擇 Codex CLI…", "Choose Codex CLI…")
+        chooseCLIItem.isHidden = client.executableURL() != nil
         quitItem.title = language.text("退出", "結束", "Quit")
 
         switch displayState {
@@ -668,11 +848,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
             contentView.fiveHour = "—"
             contentView.week = "—"
             contentView.resets = "—"
-            fiveHourItem.title = language.text("5 小时：读取中…", "5 小時：讀取中…", "5 hours: loading…")
-            weeklyItem.title = language.text("一周：读取中…", "一週：讀取中…", "Week: loading…")
-            creditsItem.title = language.text("可用重置次数：读取中…", "可用重置次數：讀取中…",
-                                              "Available resets: loading…")
-            updatedItem.title = ""
+            fiveHourInfo.text = language.text("5 小时：读取中…", "5 小時：讀取中…", "5 hours: loading…")
+            weeklyInfo.text = language.text("一周：读取中…", "一週：讀取中…", "Week: loading…")
+            creditsInfo.text = language.text("可用重置次数：读取中…", "可用重置次數：讀取中…",
+                                             "Available resets: loading…")
+            updatedInfo.text = ""
             statusItem.button?.toolTip = language.text("Codex 剩余用量", "Codex 剩餘用量",
                                                        "Codex remaining usage")
         case .usage(let usage, let updatedAt):
@@ -682,12 +862,12 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
             contentView.fiveHour = five
             contentView.week = week
             contentView.resets = credits
-            fiveHourItem.title = language.text("5 小时剩余：", "5 小時剩餘：", "5-hour remaining: ")
+            fiveHourInfo.text = language.text("5 小时剩余：", "5 小時剩餘：", "5-hour remaining: ")
                 + five + resetText(usage.fiveHour?.resetsAt)
-            weeklyItem.title = language.text("一周剩余：", "一週剩餘：", "Weekly remaining: ")
+            weeklyInfo.text = language.text("一周剩余：", "一週剩餘：", "Weekly remaining: ")
                 + week + resetText(usage.weekly?.resetsAt)
-            creditsItem.title = language.text("可用重置次数：", "可用重置次數：", "Available resets: ") + credits
-            updatedItem.title = language.text("更新于 ", "更新於 ", "Updated ")
+            creditsInfo.text = language.text("可用重置次数：", "可用重置次數：", "Available resets: ") + credits
+            updatedInfo.text = language.text("更新于 ", "更新於 ", "Updated ")
                 + formattedDate(updatedAt, dateStyle: .none, timeStyle: .short)
             statusItem.button?.toolTip = language.text("Codex 剩余用量 · 点击查看重置时间",
                                                        "Codex 剩餘用量 · 點擊查看重置時間",
@@ -696,12 +876,12 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
             contentView.fiveHour = "—"
             contentView.week = "—"
             contentView.resets = "—"
-            fiveHourItem.title = language.text("用量读取失败", "用量讀取失敗", "Could not load usage")
-            weeklyItem.title = error.localizedDescription
-            creditsItem.title = language.text("可用重置次数：—", "可用重置次數：—",
-                                              "Available resets: —")
-            updatedItem.title = language.text("可点击“立即刷新”重试", "可點擊「立即重新整理」重試",
-                                              "Choose Refresh now to retry")
+            fiveHourInfo.text = language.text("用量读取失败", "用量讀取失敗", "Could not load usage")
+            weeklyInfo.text = error.localizedDescription
+            creditsInfo.text = language.text("可用重置次数：—", "可用重置次數：—",
+                                             "Available resets: —")
+            updatedInfo.text = language.text("可点击“立即刷新”重试", "可點擊「立即重新整理」重試",
+                                             "Choose Refresh now to retry")
             statusItem.button?.toolTip = error.localizedDescription
         }
         statusItem.button?.image = contentView.templateImage()
@@ -799,7 +979,7 @@ private enum CodexUsageMenu {
         let app = NSApplication.shared
         let delegate = AppDelegate()
         app.delegate = delegate
-        app.setActivationPolicy(.regular)
+        app.setActivationPolicy(.accessory)
         withExtendedLifetime(instanceGuard) {
             app.run()
         }

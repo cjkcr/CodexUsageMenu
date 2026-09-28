@@ -1,4 +1,4 @@
-name: Release DMG
+name: Release
 
 on:
   push:
@@ -25,11 +25,13 @@ jobs:
         run: |
           version="$(tr -d '\r\n' < VERSION)"
           dmg="dist/CodexUsageMenu-${version}.dmg"
-          test "$(lipo -archs build/CodexUsageMenu.app/Contents/MacOS/CodexUsageMenu)" = "x86_64 arm64" || \
-            test "$(lipo -archs build/CodexUsageMenu.app/Contents/MacOS/CodexUsageMenu)" = "arm64 x86_64"
-          codesign --verify --deep --strict build/CodexUsageMenu.app
+          test "$(lipo -archs 'build/Codex Usage Menu.app/Contents/MacOS/CodexUsageMenu')" = "x86_64 arm64" || \
+            test "$(lipo -archs 'build/Codex Usage Menu.app/Contents/MacOS/CodexUsageMenu')" = "arm64 x86_64"
+          codesign --verify --deep --strict "build/Codex Usage Menu.app"
           hdiutil verify "$dmg"
-          (cd dist && shasum -a 256 "CodexUsageMenu-${version}.dmg" > "CodexUsageMenu-${version}.sha256")
+          (cd dist && shasum -a 256 \
+            "CodexUsageMenu-${version}.dmg" \
+            "CodexUsageMenu-${version}.pkg" > SHA256SUMS.txt)
           pkgutil --expand "dist/CodexUsageMenu-${version}.pkg" build/verified-installer
           test -f build/verified-installer/Resources/welcome.html
           test -f build/verified-installer/Resources/conclusion.html
@@ -42,6 +44,6 @@ jobs:
           gh release create "v${version}" \
             "dist/CodexUsageMenu-${version}.dmg" \
             "dist/CodexUsageMenu-${version}.pkg" \
-            "dist/CodexUsageMenu-${version}.sha256" \
+            "dist/SHA256SUMS.txt" \
             --verify-tag --title "Codex Usage Menu v${version}" \
-            --generate-notes --notes "$(cat .github/release-notes.md)"
+            --latest --notes-file .github/release-notes.md

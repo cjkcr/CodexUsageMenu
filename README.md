@@ -1,32 +1,126 @@
-# Codex Usage Menu
+<div align="center">
+  <img src="Assets/app-icon.png" width="96" alt="Codex Usage Menu 图标">
+  <h1>Codex Usage Menu</h1>
+  <p>在 macOS 菜单栏中查看 Codex 5 小时与每周剩余用量。</p>
 
-macOS 菜单栏小工具，通过已登录的 Codex CLI 查询 ChatGPT Codex 用量。使用 Codex 时每 2 分钟查询一次，空闲时每小时查询一次。
+  [![macOS 13+](https://img.shields.io/badge/macOS-13%2B-111111?logo=apple)](https://github.com/cjkcr/CodexUsageMenu/releases/latest)
+  [![Universal](https://img.shields.io/badge/Universal-Apple%20Silicon%20%7C%20Intel-2563EB)](https://github.com/cjkcr/CodexUsageMenu/releases/latest)
+  [![Latest release](https://img.shields.io/github/v/release/cjkcr/CodexUsageMenu?display_name=tag)](https://github.com/cjkcr/CodexUsageMenu/releases/latest)
+</div>
 
-应用使用单实例锁。重复从 Dock、“应用程序”或安装包打开时，只会唤醒已经运行的窗口，不会新增进程或重复的菜单栏项目。
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/menu-bar-dark.png">
+    <img src="docs/menu-bar-light.png" width="672" alt="Codex Usage Menu 菜单栏预览">
+  </picture>
+</p>
 
-菜单栏用两列两行显示 `5 H`、`WEEK` 及对应的剩余百分比，沿用第一版的 `↻1` 样式显示可用重置次数。右侧使用由用户提供的 Codex 图标制作的透明标记。整块内容作为 macOS 菜单栏模板图像交给系统着色，会随菜单栏背景明暗切换前景色；应用自身不绘制背景。点击可查看两个窗口的下次重置时间和最近更新时间。
+Codex Usage Menu 是一款轻量的原生 macOS 菜单栏工具。它通过本机已登录的 Codex CLI 读取 ChatGPT Codex 用量，在菜单栏中直接显示 `5 H`、`WEEK`、剩余百分比和可用重置次数。
 
-在有刘海的屏幕上，自动模式使用 24 点宽的仅图标布局；其他较窄的屏幕使用 116 点宽的紧凑布局。下拉菜单或应用窗口的“菜单栏显示”可选择自动、完整、紧凑或仅图标。macOS 可能因菜单栏项目过多而把图标藏在刘海后，此时应用窗口与 Dock 图标仍可显示用量和错误信息。请先关闭其他菜单栏项目腾出空间；本图标出现后，可按住 Command 将它拖到右侧。关闭窗口不会退出应用，点击 Dock 图标可重新打开窗口。
+## 下载与安装
 
-界面支持简体中文、繁体中文和英文。菜单栏顶部的 `5 H`、`WEEK` 固定不变；下拉菜单、提示、错误信息和时间格式按系统首选语言显示，其他语言回退到英文。App 收到系统语言或地区设置变化通知后重新绘制现有数据，无须等待下一次用量查询。
+前往 [GitHub Releases](https://github.com/cjkcr/CodexUsageMenu/releases/latest) 下载最新版本：
 
-## 构建与运行
+- **DMG**：打开后双击“安装 Codex Usage Menu.pkg”。
+- **PKG**：直接运行 macOS 安装器。
 
-需要 macOS、Swift 命令行工具，以及已登录 ChatGPT 账号的 Codex CLI。运行：
+应用固定安装到 `/Applications/Codex Usage Menu.app`，安装结束后会自动打开。它是纯菜单栏应用，因此不会占用 Dock，也不会出现在应用切换器中。
+
+### 系统要求
+
+- macOS 13 Ventura 或更新版本
+- Apple Silicon 或 Intel Mac
+- 已安装并登录 Codex CLI，或已安装包含 Codex CLI 的 ChatGPT/Codex 应用
+
+### 首次打开
+
+当前公开安装包使用本地签名，尚未经过 Apple Developer ID 签名与公证。如果 macOS 阻止首次打开，请进入“系统设置 → 隐私与安全性”，在安全性提示处选择“仍要打开”。请只从本项目的 Releases 页面下载安装包。
+
+## 功能
+
+- 菜单栏同时显示 5 小时和每周剩余用量。
+- 显示服务端返回的可用重置次数。
+- 点击菜单栏可查看精确重置时间和最近更新时间。
+- 支持完整、紧凑和仅图标三种显示方式。
+- 自动适配刘海屏以及菜单栏空间较窄的 Mac。
+- 自动适配浅色、深色和不同壁纸背景。
+- 支持简体中文、繁体中文和英文界面。
+- 单实例运行，重复打开不会产生多个菜单栏图标或进程。
+- 关闭用量窗口后继续在菜单栏运行；再次从“应用程序”打开即可恢复窗口。
+
+## 菜单栏显示方式
+
+| 模式 | 行为 |
+| --- | --- |
+| 自动 | 刘海屏使用仅图标；窄屏使用紧凑模式；空间充足时显示完整内容 |
+| 完整 | 显示 `5 H`、`WEEK`、百分比、重置次数和图标 |
+| 紧凑 | 缩短间距，在较少空间内保留主要信息 |
+| 仅图标 | 只显示 24 点宽的应用图标，适合 13 英寸刘海屏 |
+
+如果菜单栏项目过多，macOS 仍可能把项目藏在刘海后。可先关闭其他菜单栏项目，图标出现后按住 Command 将它拖到右侧。
+
+## 刷新策略
+
+应用启动时立即查询一次用量，随后每分钟判断本机是否正在使用 Codex：
+
+- Codex 或 ChatGPT 位于前台，或最近 5 分钟内有 Codex 会话更新时，每 2 分钟查询一次。
+- 未检测到使用活动时，每小时查询一次。
+- “立即刷新”始终可以手动触发查询。
+
+这种策略兼顾数据及时性与后台资源消耗。
+
+## Codex CLI 查找
+
+应用会自动检查以下位置：
+
+- ChatGPT.app 与 Codex.app 内置的 Codex CLI
+- `~/.local/bin`、`~/.codex/bin` 等常见用户目录
+- nvm、Volta、asdf、mise 和 pnpm 目录
+- Homebrew 路径及当前 `PATH`
+
+仅在自动查找失败时，菜单中才会出现“选择 Codex CLI…”。手动选择的路径只保存在本机。
+
+诊断应用实际找到的路径：
+
+```sh
+"/Applications/Codex Usage Menu.app/Contents/MacOS/CodexUsageMenu" --diagnose-cli
+```
+
+如果 CLI 尚未登录，请先在终端运行：
+
+```sh
+codex login
+```
+
+## 数据与隐私
+
+用量数据来自 Codex app-server 的 `account/rateLimits/read`。应用不自建服务器、不收集遥测，也不保存用量历史。
+
+- 剩余百分比按 `100 - usedPercent` 计算。
+- “重置次数”对应服务端的 `rateLimitResetCredits.availableCount`。
+- 服务端未返回的数据以 `—` 显示。
+
+## 本地构建
+
+需要 macOS 和 Swift 命令行工具：
 
 ```sh
 ./build.sh
-open build/CodexUsageMenu.app
+open "build/Codex Usage Menu.app"
 ```
 
-程序自动查找 ChatGPT/Codex 应用内的 Codex CLI、`~/.local/bin` 等常见用户安装位置、Node 版本管理器目录、Homebrew 路径和 `PATH`。菜单栏 App 不一定继承终端的 `PATH`；若仍找不到，请在终端运行 `command -v codex`，然后在菜单栏下拉菜单选择“选择 Codex CLI…”，指定该文件。所选路径只保存在本机。可运行 `/Applications/CodexUsageMenu.app/Contents/MacOS/CodexUsageMenu --diagnose-cli` 查看 App 实际找到的路径。首次运行可先用 `codex login` 登录。菜单栏出现 `Codex —` 时，点击图标可查看错误并手动刷新。
+生成通用安装包：
 
-## 安装包
+```sh
+./package.sh
+```
 
-从 [GitHub Releases](https://github.com/cjkcr/CodexUsageMenu/releases/latest) 下载最新 DMG 或 PKG。打开 DMG 后，双击其中的“安装 Codex Usage Menu.pkg”，按 macOS 安装器的步骤安装；也可以直接下载 PKG 安装。**只打开 DMG 不会安装应用。**安装结束后，从“应用程序”打开 Codex Usage Menu，即可看到显示版本和用量的窗口。需要 macOS 13 或更新版本，以及已登录的 Codex CLI 或附带 Codex CLI 的 ChatGPT/Codex 应用。更新前请退出旧版本。
+产物位于 `dist/`，同时包含适用于 Apple Silicon 与 Intel Mac 的 DMG 和 PKG。`VERSION` 是应用、安装包和 GitHub Release 的唯一版本来源。
 
-当前没有 Apple Developer ID 证书，应用仅进行本地签名，DMG 未经公证。首次打开如被 macOS 阻止，先尝试打开应用，然后进入“系统设置 → 隐私与安全性”，在安全性提示处选择“仍要打开”。请只从此项目的 Releases 页面下载。
+## 发布流程
 
-本地运行 `./package.sh` 会生成 Apple Silicon 与 Intel 通用 DMG 和带有欢迎、安装进度、完成页面的 PKG，文件位于 `dist/`。`VERSION` 是应用和安装包的版本来源。每次完成代码更新并提交后，运行 `./release.sh`：脚本将补丁版本号加一，创建并推送 Git 标签；GitHub Actions 随后构建 DMG、PKG 并发布新版本。首次版本是 `v1.0.0`。
+完成并验证代码更新后运行 `./release.sh`。脚本会增加补丁版本、创建标签并推送；GitHub Actions 随后构建、校验并发布新的 DMG、PKG 与 SHA-256 校验文件。
 
-数据来自 Codex app-server 的 `account/rateLimits/read`。这里的“重置次数”指服务端 `rateLimitResetCredits.availableCount`，不会自动使用重置额度。剩余百分比根据 `100 - usedPercent` 计算；没有返回的数据以 `—` 表示。App 启动时立即查询，之后每分钟检查一次本机活动状态：Codex/ChatGPT 在前台，或最近 5 分钟有 Codex 会话文件更新时，每 2 分钟查询；否则每小时查询。“立即刷新”不受间隔限制。
+---
+
+Codex Usage Menu 是社区项目，与 OpenAI 没有隶属或背书关系。
