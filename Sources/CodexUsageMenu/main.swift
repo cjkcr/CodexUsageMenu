@@ -1,5 +1,38 @@
 import AppKit
+import Darwin
 import Foundation
+
+private enum AppNotifications {
+    static let showDashboard = Notification.Name("local.codex.usage-menu.show-dashboard")
+}
+
+private final class SingleInstanceGuard {
+    private let descriptor: Int32
+
+    init?() {
+        let directory = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/CodexUsageMenu", isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: directory,
+                                                    withIntermediateDirectories: true)
+        } catch {
+            return nil
+        }
+        let path = directory.appendingPathComponent("instance.lock").path
+        let descriptor = Darwin.open(path, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR)
+        guard descriptor >= 0 else { return nil }
+        guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
+            Darwin.close(descriptor)
+            return nil
+        }
+        self.descriptor = descriptor
+    }
+
+    deinit {
+        flock(descriptor, LOCK_UN)
+        Darwin.close(descriptor)
+    }
+}
 
 private enum AppLanguage: Equatable {
     case simplifiedChinese, traditionalChinese, english
@@ -403,6 +436,10 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
             self, selector: #selector(checkLanguage),
             name: Notification.Name("AppleLanguagePreferencesChangedNotification"), object: nil
         )
+        DistributedNotificationCenter.default().addObserver(
+            self, selector: #selector(showDashboardNotification),
+            name: AppNotifications.showDashboard, object: nil
+        )
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -412,6 +449,10 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
 
     func windowWillClose(_ notification: Notification) {
         dashboardWindow = nil
+    }
+
+    @objc private func showDashboardNotification() {
+        showDashboard()
     }
 
     private func showDashboard() {
@@ -713,7 +754,6 @@ private enum CodexUsageMenu {
             print(CodexUsageClient().executableURL()?.path ?? "Codex CLI not found")
             return
         }
-        let app = NSApplication.shared
         if CommandLine.arguments.contains("--render-preview") {
             for languageCode in ["en", "zh-Hans", "zh-Hant"] {
                 for (name, appearance) in [("light", NSAppearance.Name.aqua),
@@ -747,9 +787,21 @@ private enum CodexUsageMenu {
             }
             return
         }
+        guard let instanceGuard = SingleInstanceGuard() else {
+            DistributedNotificationCenter.default().post(name: AppNotifications.showDashboard,
+                                                         object: nil)
+            let currentPID = ProcessInfo.processInfo.processIdentifier
+            NSRunningApplication.runningApplications(withBundleIdentifier: "local.codex.usage-menu")
+                .first(where: { $0.processIdentifier != currentPID })?
+                .activate(options: [.activateAllWindows])
+            return
+        }
+        let app = NSApplication.shared
         let delegate = AppDelegate()
         app.delegate = delegate
-        app.setActivationPolicy(.accessory)
-        app.run()
+        app.setActivationPolicy(.regular)
+        withExtendedLifetime(instanceGuard) {
+            app.run()
+        }
     }
 }
