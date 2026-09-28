@@ -312,7 +312,7 @@ private final class StatusContentView: NSView {
 
 }
 
-private final class AppDelegate: NSObject, NSApplicationDelegate {
+private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private static let displayModePreferenceKey = "StatusDisplayMode"
 
     private enum DisplayState {
@@ -334,6 +334,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     private let chooseCLIItem = NSMenuItem(title: "", action: #selector(chooseCLI), keyEquivalent: "")
     private let quitItem = NSMenuItem(title: "", action: #selector(quitApp), keyEquivalent: "q")
     private let contentView = StatusContentView(frame: NSRect(x: 0, y: 0, width: 168, height: 24))
+    private var dashboardWindow: NSWindow?
+    private let dashboardUsage = NSTextField(labelWithString: "")
+    private let dashboardStatus = NSTextField(wrappingLabelWithString: "")
+    private let dashboardPlacement = NSTextField(wrappingLabelWithString: "")
+    private let dashboardMode = NSPopUpButton(frame: .zero, pullsDown: false)
     private var language = AppLanguage.current()
     private var displayState: DisplayState = .loading
     private var refreshing = false
@@ -346,6 +351,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: 24)
+        statusItem.autosaveName = "CodexUsageMenuStatusItem"
+        statusItem.isVisible = true
         if let button = statusItem.button {
             button.title = ""
             button.imagePosition = .imageOnly
@@ -375,6 +382,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.menu = menu
 
         render()
+        showDashboard()
         refreshNow()
         activityTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
             self?.refreshIfDue()
@@ -395,6 +403,141 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             self, selector: #selector(checkLanguage),
             name: Notification.Name("AppleLanguagePreferencesChangedNotification"), object: nil
         )
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        showDashboard()
+        return true
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        dashboardWindow = nil
+    }
+
+    private func showDashboard() {
+        if let dashboardWindow {
+            dashboardWindow.makeKeyAndOrderFront(nil)
+            NSApplication.shared.activate(ignoringOtherApps: true)
+            return
+        }
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 420, height: 310),
+                              styleMask: [.titled, .closable, .miniaturizable],
+                              backing: .buffered, defer: false)
+        window.title = "Codex Usage Menu"
+        window.center()
+        window.delegate = self
+        let root = NSStackView()
+        root.orientation = .vertical
+        root.alignment = .leading
+        root.spacing = 13
+        root.edgeInsets = NSEdgeInsets(top: 22, left: 24, bottom: 22, right: 24)
+        root.translatesAutoresizingMaskIntoConstraints = false
+        let title = NSTextField(labelWithString: "Codex Usage Menu")
+        title.font = .boldSystemFont(ofSize: 19)
+        root.addArrangedSubview(title)
+        dashboardUsage.font = .monospacedDigitSystemFont(ofSize: 15, weight: .medium)
+        root.addArrangedSubview(dashboardUsage)
+        dashboardStatus.maximumNumberOfLines = 3
+        root.addArrangedSubview(dashboardStatus)
+        let modeRow = NSStackView()
+        modeRow.orientation = .horizontal
+        modeRow.spacing = 10
+        let modeLabel = NSTextField(labelWithString: "")
+        modeLabel.identifier = NSUserInterfaceItemIdentifier("displayModeLabel")
+        modeRow.addArrangedSubview(modeLabel)
+        dashboardMode.target = self
+        dashboardMode.action = #selector(selectDashboardMode(_:))
+        modeRow.addArrangedSubview(dashboardMode)
+        root.addArrangedSubview(modeRow)
+        dashboardPlacement.font = .systemFont(ofSize: 11)
+        dashboardPlacement.textColor = .secondaryLabelColor
+        root.addArrangedSubview(dashboardPlacement)
+        let actions = NSStackView()
+        actions.orientation = .horizontal
+        actions.spacing = 10
+        for (identifier, action) in [("refresh", #selector(refreshNow)),
+                                     ("chooseCLI", #selector(chooseCLI))] {
+            let button = NSButton(title: "", target: self, action: action)
+            button.identifier = NSUserInterfaceItemIdentifier(identifier)
+            actions.addArrangedSubview(button)
+        }
+        root.addArrangedSubview(actions)
+        let help = NSTextField(wrappingLabelWithString: "")
+        help.identifier = NSUserInterfaceItemIdentifier("statusHelp")
+        help.font = .systemFont(ofSize: 11)
+        help.textColor = .secondaryLabelColor
+        root.addArrangedSubview(help)
+        window.contentView?.addSubview(root)
+        if let content = window.contentView {
+            NSLayoutConstraint.activate([
+                root.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+                root.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+                root.topAnchor.constraint(equalTo: content.topAnchor),
+                root.bottomAnchor.constraint(lessThanOrEqualTo: content.bottomAnchor)
+            ])
+        }
+        dashboardWindow = window
+        updateDashboard()
+        window.makeKeyAndOrderFront(nil)
+        NSApplication.shared.activate(ignoringOtherApps: true)
+    }
+
+    @objc private func selectDashboardMode(_ sender: NSPopUpButton) {
+        UserDefaults.standard.set(sender.indexOfSelectedItem, forKey: Self.displayModePreferenceKey)
+        render()
+    }
+
+    private func updateDashboard() {
+        guard let root = dashboardWindow?.contentView?.subviews.first as? NSStackView else { return }
+        dashboardWindow?.title = "Codex Usage Menu \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")"
+        switch displayState {
+        case .loading:
+            dashboardUsage.stringValue = language.text("正在读取用量…", "正在讀取用量…", "Loading usage…")
+            dashboardStatus.stringValue = ""
+        case .usage(let usage, let updatedAt):
+            dashboardUsage.stringValue = "5 H \(usage.fiveHour.map { "\($0.remaining)%" } ?? "—")    WEEK \(usage.weekly.map { "\($0.remaining)%" } ?? "—")    ↻\(usage.resetCredits.map(String.init) ?? "—")"
+            dashboardStatus.stringValue = language.text("更新于 ", "更新於 ", "Updated ")
+                + formattedDate(updatedAt, dateStyle: .none, timeStyle: .short)
+        case .failure(let error):
+            dashboardUsage.stringValue = language.text("用量读取失败", "用量讀取失敗", "Could not load usage")
+            dashboardStatus.stringValue = error.localizedDescription
+        }
+        dashboardMode.removeAllItems()
+        dashboardMode.addItems(withTitles: StatusDisplayMode.allCases.map { $0.title(in: language) })
+        dashboardMode.selectItem(at: preferredDisplayMode.rawValue)
+        if let buttonWindow = statusItem.button?.window,
+           let screen = buttonWindow.screen,
+           let safeArea = screen.auxiliaryTopRightArea,
+           buttonWindow.frame.minX < safeArea.minX {
+            dashboardPlacement.stringValue = language.text(
+                "菜单栏图标落在刘海左侧或遮挡区域。请先关闭其他菜单栏项目腾出空间。",
+                "選單列圖示落在瀏海左側或遮擋區域。請先關閉其他選單列項目騰出空間。",
+                "The menu bar icon is left of the camera safe area. Free space by closing other menu bar items."
+            )
+        } else {
+            dashboardPlacement.stringValue = language.text(
+                "菜单栏图标已创建。", "選單列圖示已建立。", "Menu bar icon created."
+            )
+        }
+        if let modeRow = root.arrangedSubviews.first(where: { $0 is NSStackView }) as? NSStackView,
+           let label = modeRow.arrangedSubviews.first as? NSTextField {
+            label.stringValue = language.text("菜单栏显示", "選單列顯示", "Menu bar display")
+        }
+        for button in root.arrangedSubviews.compactMap({ $0 as? NSStackView }).flatMap(\.arrangedSubviews).compactMap({ $0 as? NSButton }) {
+            switch button.identifier?.rawValue {
+            case "refresh": button.title = language.text("立即刷新", "立即重新整理", "Refresh now")
+            case "chooseCLI": button.title = language.text("选择 Codex CLI…", "選擇 Codex CLI…", "Choose Codex CLI…")
+            default: break
+            }
+        }
+        if let help = root.arrangedSubviews.compactMap({ $0 as? NSTextField })
+            .first(where: { $0.identifier?.rawValue == "statusHelp" }) {
+            help.stringValue = language.text(
+                "如果刘海遮住菜单栏图标，请先关闭其他菜单栏项目腾出空间；图标出现后，可按住 Command 将它拖到右侧。此窗口可从 Dock 重新打开。",
+                "若瀏海遮住選單列圖示，請先關閉其他選單列項目騰出空間；圖示出現後，可按住 Command 將它拖到右側。此視窗可從 Dock 重新開啟。",
+                "If the camera housing hides the menu bar icon, free space by closing other menu bar items. Once visible, Command-drag it right. Reopen this window from the Dock."
+            )
+        }
     }
 
     private func refreshIfDue() {
@@ -521,6 +664,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             statusItem.button?.toolTip = error.localizedDescription
         }
         statusItem.button?.image = contentView.templateImage()
+        updateDashboard()
     }
 
     private func updateDisplayMode() {
@@ -528,9 +672,9 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         if preferredDisplayMode == .automatic {
             let screen = statusItem.button?.window?.screen ?? NSScreen.main
             let width = screen?.frame.width ?? 1680
-            if width < 1280 {
+            if screen?.auxiliaryTopRightArea != nil || width < 1280 {
                 mode = .iconOnly
-            } else if width < 1600 || screen?.auxiliaryTopRightArea != nil {
+            } else if width < 1600 {
                 mode = .compact
             } else {
                 mode = .full

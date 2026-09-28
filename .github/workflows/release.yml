@@ -30,6 +30,9 @@ jobs:
           codesign --verify --deep --strict build/CodexUsageMenu.app
           hdiutil verify "$dmg"
           (cd dist && shasum -a 256 "CodexUsageMenu-${version}.dmg" > "CodexUsageMenu-${version}.sha256")
+          pkgutil --expand "dist/CodexUsageMenu-${version}.pkg" build/verified-installer
+          test -f build/verified-installer/Resources/welcome.html
+          test -f build/verified-installer/Resources/conclusion.html
       - name: Publish GitHub Release
         shell: bash
         env:
@@ -38,6 +41,7 @@ jobs:
           version="$(tr -d '\r\n' < VERSION)"
           gh release create "v${version}" \
             "dist/CodexUsageMenu-${version}.dmg" \
+            "dist/CodexUsageMenu-${version}.pkg" \
             "dist/CodexUsageMenu-${version}.sha256" \
             --verify-tag --title "Codex Usage Menu v${version}" \
             --generate-notes --notes "$(cat .github/release-notes.md)"
