@@ -121,6 +121,10 @@ open "build/Codex Usage Menu.app"
 
 完成并验证代码更新后运行 `./release.sh`。脚本会增加补丁版本、创建标签并推送；GitHub Actions 随后构建、校验并发布新的 DMG、PKG 与 SHA-256 校验文件。
 
+## 贡献与致谢
+
+本项目由 [cjkcr](https://github.com/cjkcr) 发起、设计和测试，并在 OpenAI Codex 协助下开发。协作方式与署名说明见 [CONTRIBUTORS.md](CONTRIBUTORS.md)。
+
 ---
 
 Codex Usage Menu 是社区项目，与 OpenAI 没有隶属或背书关系。
