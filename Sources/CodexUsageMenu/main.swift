@@ -300,6 +300,8 @@ private final class StatusContentView: NSView {
             return
         }
         let compact = displayMode == .compact
+        // Compact coordinates are based on visible glyph bounds: the three gaps between
+        // 5 H, WEEK, reset credits, and the icon render at 8 points in the 104-point image.
         let columns: [(String, String, CGFloat, CGFloat)] = compact
             ? [("5 H", fiveHour, 0, 29), ("WEEK", week, 30.75, 35)]
             : [("5 H", fiveHour, 3, 32), ("WEEK", week, 41.75, 34)]
@@ -438,6 +440,9 @@ private final class MenuInfoView: NSView {
 
 private final class AppDelegate: NSObject, NSApplicationDelegate {
     private static let displayModePreferenceKey = "StatusDisplayMode"
+    private static let activityCheckInterval: TimeInterval = 15
+    private static let activeRefreshInterval: TimeInterval = 30
+    private static let inactiveRefreshInterval: TimeInterval = 10 * 60
 
     private enum DisplayState {
         case loading
@@ -477,6 +482,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     private var language = AppLanguage.current()
     private var displayState: DisplayState = .loading
     private var refreshing = false
+    private var activityCheckInFlight = false
     private var activityTimer: Timer?
     private var lastRefreshStartedAt: Date?
     private var preferredDisplayMode: StatusDisplayMode {
@@ -524,9 +530,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         render()
         showDashboard()
         refreshNow()
-        activityTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: Self.activityCheckInterval, repeats: true) { [weak self] _ in
             self?.refreshIfDue()
         }
+        RunLoop.main.add(timer, forMode: .common)
+        activityTimer = timer
         NSWorkspace.shared.notificationCenter.addObserver(
             self, selector: #selector(applicationActivated),
             name: NSWorkspace.didActivateApplicationNotification, object: nil
@@ -761,13 +769,17 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func refreshIfDue() {
+        guard !activityCheckInFlight else { return }
+        activityCheckInFlight = true
         let bundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
         let codexIsForeground = bundleID == "com.openai.codex" || bundleID == "com.openai.chatgpt"
         DispatchQueue.global(qos: .utility).async { [weak self] in
             let active = codexIsForeground || CodexActivity.hasRecentSession()
             DispatchQueue.main.async {
-                guard let self, let lastRefreshStartedAt = self.lastRefreshStartedAt else { return }
-                let interval: TimeInterval = active ? 2 * 60 : 60 * 60
+                guard let self else { return }
+                self.activityCheckInFlight = false
+                guard let lastRefreshStartedAt = self.lastRefreshStartedAt else { return }
+                let interval = active ? Self.activeRefreshInterval : Self.inactiveRefreshInterval
                 if Date.now.timeIntervalSince(lastRefreshStartedAt) >= interval - 1 {
                     self.refreshNow()
                 }
