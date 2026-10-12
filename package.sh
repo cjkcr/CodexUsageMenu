@@ -32,6 +32,13 @@ exit 0
 SCRIPT
 cat > "$stage/scripts/postinstall" <<'SCRIPT'
 #!/bin/sh
+set -eu
+# Fail the installation instead of reporting success with a missing application.
+installed_app="${3%/}/Applications/Codex Usage Menu.app"
+if [ ! -x "$installed_app/Contents/MacOS/CodexUsageMenu" ]; then
+  echo "Codex Usage Menu was not installed at $installed_app" >&2
+  exit 1
+fi
 # Open the installed app in the signed-in user's desktop session so installation
 # has a visible result and the user does not need to search for the app.
 console_user=$(/usr/bin/stat -f %Su /dev/console)
@@ -44,7 +51,20 @@ exit 0
 SCRIPT
 chmod 755 "$stage/scripts/preinstall"
 chmod 755 "$stage/scripts/postinstall"
-COPYFILE_DISABLE=1 pkgbuild --root "$stage/pkg" --scripts "$stage/scripts" --install-location /Applications \
+# Ignore copies in development folders and old versions from the previous release series.
+cat > "$stage/components.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><array><dict>
+  <key>RootRelativeBundlePath</key><string>Codex Usage Menu.app</string>
+  <key>BundleIsRelocatable</key><false/>
+  <key>BundleIsVersionChecked</key><false/>
+  <key>BundleHasStrictIdentifier</key><true/>
+  <key>BundleOverwriteAction</key><string>upgrade</string>
+</dict></array></plist>
+PLIST
+COPYFILE_DISABLE=1 pkgbuild --root "$stage/pkg" --component-plist "$stage/components.plist" \
+  --scripts "$stage/scripts" --install-location /Applications \
   --identifier local.codex.usage-menu --version "$version" \
   "$stage/CodexUsageMenu-component.pkg"
 

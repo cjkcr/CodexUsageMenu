@@ -35,6 +35,14 @@ jobs:
           pkgutil --expand "dist/CodexUsageMenu-${version}.pkg" build/verified-installer
           test -f build/verified-installer/Resources/welcome.html
           test -f build/verified-installer/Resources/conclusion.html
+          python3 - <<'PY'
+          import xml.etree.ElementTree as ET
+          root = ET.parse('build/verified-installer/CodexUsageMenu-component.pkg/PackageInfo').getroot()
+          assert root.attrib['install-location'] == '/Applications'
+          assert not list(root.find('relocate'))
+          assert not list(root.find('bundle-version'))
+          assert root.find('upgrade-bundle/bundle') is not None
+          PY
       - name: Publish GitHub Release
         shell: bash
         env:

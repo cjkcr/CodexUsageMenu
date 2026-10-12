@@ -19,6 +19,8 @@ Codex Usage Menu 是一款轻量的原生 macOS 菜单栏工具。它通过本�
 
 ## 下载与安装
 
+> **安装问题提示（v1.0.3 及此前安装包）**：如果电脑上存在旧的较高版本测试程序，安装器可能跳过应用文件却显示安装成功，导致“应用程序”中找不到本应用。安装流程修复已提交，修复安装包正在测试，正式下载更新后会在此说明。
+
 前往 [GitHub Releases](https://github.com/cjkcr/CodexUsageMenu/releases/latest) 下载最新版本：
 
 - **DMG**：打开后双击“安装 Codex Usage Menu.pkg”。
