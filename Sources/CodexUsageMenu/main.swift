@@ -34,7 +34,7 @@ private final class SingleInstanceGuard {
     }
 }
 
-private enum AppLanguage: Equatable {
+enum AppLanguage: Equatable {
     case simplifiedChinese, traditionalChinese, english
 
     static func current() -> AppLanguage {
@@ -58,9 +58,14 @@ private enum AppLanguage: Equatable {
     }
 }
 
-private struct UsageWindow {
+struct UsageWindow {
     let remaining: Int
     let resetsAt: Date?
+
+    init(remaining: Int, resetsAt: Date?) {
+        self.remaining = max(0, min(100, remaining))
+        self.resetsAt = resetsAt
+    }
 
     init?(_ value: [String: Any]?) {
         guard let value, let used = value["usedPercent"] as? NSNumber else { return nil }
@@ -73,10 +78,32 @@ private struct UsageWindow {
     }
 }
 
-private struct UsageSnapshot {
+struct UsageSnapshot {
     let fiveHour: UsageWindow?
     let weekly: UsageWindow?
     let resetCredits: Int?
+    var quotaBuckets: [GeminiQuota] = []
+    var usesWeeklyFallback: Bool { !quotaBuckets.isEmpty && fiveHour == nil && weekly != nil }
+    var displayedFiveHour: UsageWindow? { usesWeeklyFallback ? weekly : fiveHour }
+
+    init(geminiQuotas: [GeminiQuota], selectedGroup: String? = nil) {
+        quotaBuckets = geminiQuotas
+        let selected = geminiQuotas.filter { quota in
+            selectedGroup == nil ? quota.isPrimaryGemini : quota.groupName == selectedGroup
+        }
+        fiveHour = selected.filter { $0.windowID == "5h" }
+            .min(by: { $0.fraction < $1.fraction })?.window
+        weekly = selected.filter { $0.windowID == "weekly" }
+            .min(by: { $0.fraction < $1.fraction })?.window
+        resetCredits = nil
+    }
+
+    func selectingAGYModel(_ id: String?) -> UsageSnapshot {
+        guard let id else { return self }
+        let option = AGYModelOption.options(from: quotaBuckets).first { $0.id == id }
+        // A missing saved model must show unavailable data, never silently another pool.
+        return UsageSnapshot(geminiQuotas: quotaBuckets, selectedGroup: option?.groupName ?? "")
+    }
 
     init(_ result: [String: Any]) {
         let buckets = result["rateLimitsByLimitId"] as? [String: Any]
@@ -276,6 +303,8 @@ private final class StatusContentView: NSView {
         tinted.unlockFocus()
         return tinted
     }()
+    var provider: UsageProvider = .codex
+    var showsWeeklyFallback = false
     var usesWhiteForeground = false
     var previewBackground: NSColor?
     var displayMode: StatusDisplayMode = .full { didSet { needsDisplay = true } }
@@ -294,17 +323,15 @@ private final class StatusContentView: NSView {
             bounds.fill()
         }
         if displayMode == .iconOnly {
-            (usesWhiteForeground ? whiteCodexIcon : codexIcon)?
-                .draw(in: NSRect(x: 1, y: 1, width: 22, height: 22),
-                      from: .zero, operation: .sourceOver, fraction: 1)
+            drawProviderIcon(in: NSRect(x: 1, y: 1, width: 22, height: 22))
             return
         }
         let compact = displayMode == .compact
         // Compact coordinates are based on visible glyph bounds: the three gaps between
         // 5 H, WEEK, reset credits, and the icon render at 8 points in the 104-point image.
         let columns: [(String, String, CGFloat, CGFloat)] = compact
-            ? [("5 H", fiveHour, 0, 29), ("WEEK", week, 30.75, 35)]
-            : [("5 H", fiveHour, 3, 32), ("WEEK", week, 41.75, 34)]
+            ? [(provider.firstLabel + (showsWeeklyFallback ? "*" : ""), fiveHour, 0, 29), (provider.secondLabel, week, 30.75, 35)]
+            : [(provider.firstLabel + (showsWeeklyFallback ? "*" : ""), fiveHour, 3, 32), (provider.secondLabel, week, 41.75, 34)]
         let labelFont = NSFont.systemFont(ofSize: 7, weight: .medium)
         let valueFont = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .semibold)
         let foreground: NSColor = usesWhiteForeground ? .white : .black
@@ -314,14 +341,41 @@ private final class StatusContentView: NSView {
             drawText(value, font: valueFont, color: foreground,
                      in: NSRect(x: x, y: 1, width: width, height: 12), alignment: .left)
         }
+        if provider == .codex {
         drawText("↻\(resets)", font: compact ? NSFont.systemFont(ofSize: 11, weight: .medium)
                                            : NSFont.menuBarFont(ofSize: 0),
                  color: foreground, in: compact ? NSRect(x: 56, y: -1, width: 25, height: 18)
                                                 : NSRect(x: 74.75, y: 0, width: 27, height: 18))
-        (usesWhiteForeground ? whiteCodexIcon : codexIcon)?
-            .draw(in: compact ? NSRect(x: 78.5, y: -0.375, width: 22, height: 22)
-                              : NSRect(x: 106.75, y: -1.25, width: 24, height: 24),
-                  from: .zero, operation: .sourceOver, fraction: 1)
+        }
+        let iconX: CGFloat = provider == .codex ? (compact ? 78.5 : 106.75) : (compact ? 58 : 78)
+        drawProviderIcon(in: NSRect(x: iconX, y: compact ? -0.375 : -1.25,
+                                   width: compact ? 22 : 24, height: compact ? 22 : 24))
+    }
+
+    private func drawProviderIcon(in rect: NSRect) {
+        if provider == .codex {
+            (usesWhiteForeground ? whiteCodexIcon : codexIcon)?.draw(in: rect,
+                from: .zero, operation: .sourceOver, fraction: 1)
+            return
+        }
+        (usesWhiteForeground ? NSColor.white : NSColor.black).setFill()
+        let r = rect.insetBy(dx: 3, dy: 3)
+        let path = NSBezierPath()
+        path.move(to: NSPoint(x: r.midX, y: r.maxY))
+        path.curve(to: NSPoint(x: r.maxX, y: r.midY),
+                   controlPoint1: NSPoint(x: r.midX + 2, y: r.midY + 2),
+                   controlPoint2: NSPoint(x: r.midX + 2, y: r.midY + 2))
+        path.curve(to: NSPoint(x: r.midX, y: r.minY),
+                   controlPoint1: NSPoint(x: r.midX + 2, y: r.midY - 2),
+                   controlPoint2: NSPoint(x: r.midX + 2, y: r.midY - 2))
+        path.curve(to: NSPoint(x: r.minX, y: r.midY),
+                   controlPoint1: NSPoint(x: r.midX - 2, y: r.midY - 2),
+                   controlPoint2: NSPoint(x: r.midX - 2, y: r.midY - 2))
+        path.curve(to: NSPoint(x: r.midX, y: r.maxY),
+                   controlPoint1: NSPoint(x: r.midX - 2, y: r.midY + 2),
+                   controlPoint2: NSPoint(x: r.midX - 2, y: r.midY + 2))
+        path.close()
+        path.fill()
     }
 
     func templateImage() -> NSImage {
@@ -349,7 +403,7 @@ private final class StatusContentView: NSView {
 }
 
 private final class DashboardMetricCard: NSView {
-    private let titleField = NSTextField(labelWithString: "")
+    let titleField = NSTextField(labelWithString: "")
     private let symbolView = NSImageView()
     let valueField = NSTextField(labelWithString: "—")
 
@@ -451,6 +505,48 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private let client = CodexUsageClient()
+    private let geminiClient = GeminiUsageClient()
+    private let providerItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+    private var providerOptions: [NSMenuItem] = []
+    private let modelsItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+    private let modelSelectionItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+    private let dashboardModel = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let dashboardModelLabel = NSTextField(labelWithString: "")
+    private let dashboardModelHint = NSTextField(labelWithString: "")
+    private let dashboardModelRow = NSStackView()
+    private let agyModelMonitor = AGYModelMonitor()
+    private var currentAGYModelName = AGYModelMonitor.readModel()
+    private var followsAGYModel: Bool {
+        UserDefaults.standard.object(forKey: "AGYFollowCurrentModel") as? Bool ?? true
+    }
+    private var selectedAGYModelID: String? {
+        if followsAGYModel {
+            return AGYModelOption.matching(currentAGYModelName, in: agyModelOptions)?.id ?? "unavailable-current-model"
+        }
+        return UserDefaults.standard.string(forKey: "AGYSelectedModel")
+    }
+    private var agyModelOptions: [AGYModelOption] {
+        if case .usage(let usage, _) = displayState {
+            return AGYModelOption.options(from: usage.quotaBuckets)
+        }
+        return []
+    }
+    private var selectedAGYModel: AGYModelOption? {
+        if let id = selectedAGYModelID { return agyModelOptions.first { $0.id == id } }
+        return agyModelOptions.first { $0.groupName.lowercased() == "gemini models" }
+    }
+    private var presentedState: DisplayState {
+        guard provider == .gemini, case .usage(let usage, let date) = displayState else { return displayState }
+        return .usage(usage.selectingAGYModel(selectedAGYModelID), date)
+    }
+    private let dashboardProvider = NSSegmentedControl(labels: ["Codex", "Gemini"], trackingMode: .selectOne, target: nil, action: nil)
+    private let dashboardTitle = NSTextField(labelWithString: "Codex Usage")
+    private var provider: UsageProvider {
+        UsageProvider(rawValue: UserDefaults.standard.integer(forKey: "UsageProvider")) ?? .codex
+    }
+    private var states: [UsageProvider: DisplayState] = [:]
+    private var refreshingProviders: Set<UsageProvider> = []
+    private var refreshDates: [UsageProvider: Date] = [:]
     private var statusItem: NSStatusItem!
     private let menu = NSMenu()
     private let fiveHourItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
@@ -481,10 +577,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     private let dashboardResets = DashboardMetricCard(title: "RESETS", symbolName: "arrow.clockwise")
     private var language = AppLanguage.current()
     private var displayState: DisplayState = .loading
-    private var refreshing = false
     private var activityCheckInFlight = false
     private var activityTimer: Timer?
-    private var lastRefreshStartedAt: Date?
     private var preferredDisplayMode: StatusDisplayMode {
         StatusDisplayMode(rawValue: UserDefaults.standard.integer(forKey: Self.displayModePreferenceKey))
             ?? .automatic
@@ -508,7 +602,19 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             item.isEnabled = false
             menu.addItem(item)
         }
+        menu.addItem(modelsItem)
         menu.addItem(.separator())
+        let providerMenu = NSMenu()
+        for provider in UsageProvider.allCases {
+            let item = NSMenuItem(title: provider.title, action: #selector(selectProvider(_:)), keyEquivalent: "")
+            item.target = self
+            item.tag = provider.rawValue
+            providerMenu.addItem(item)
+            providerOptions.append(item)
+        }
+        providerItem.submenu = providerMenu
+        menu.addItem(providerItem)
+        menu.addItem(modelSelectionItem)
         let displayMenu = NSMenu()
         for mode in StatusDisplayMode.allCases {
             let item = NSMenuItem(title: "", action: #selector(selectDisplayMode(_:)), keyEquivalent: "")
@@ -527,6 +633,12 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(quitItem)
         statusItem.menu = menu
 
+        agyModelMonitor.onChange = { [weak self] model in
+            guard let self else { return }
+            self.currentAGYModelName = model
+            if self.provider == .gemini && self.followsAGYModel { self.render() }
+        }
+        agyModelMonitor.check()
         render()
         showDashboard()
         refreshNow()
@@ -572,7 +684,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             NSApplication.shared.activate(ignoringOtherApps: true)
             return
         }
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 460, height: 338),
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 460, height: 440),
                               styleMask: [.titled, .closable, .fullSizeContentView],
                               backing: .buffered, defer: false)
         window.title = "Codex Usage Menu"
@@ -605,7 +717,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             appIcon.widthAnchor.constraint(equalToConstant: 38),
             appIcon.heightAnchor.constraint(equalToConstant: 38)
         ])
-        let title = NSTextField(labelWithString: "Codex Usage")
+        let title = dashboardTitle
         title.font = .systemFont(ofSize: 21, weight: .semibold)
         dashboardStatus.font = .systemFont(ofSize: 11, weight: .regular)
         dashboardStatus.textColor = .secondaryLabelColor
@@ -625,6 +737,27 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         header.alignment = .centerY
         header.spacing = 11
         root.addArrangedSubview(header)
+
+        dashboardProvider.target = self
+        dashboardProvider.action = #selector(selectDashboardProvider(_:))
+        dashboardProvider.setAccessibilityLabel(language.text("用量来源", "用量來源", "Usage provider"))
+        root.addArrangedSubview(dashboardProvider)
+
+        dashboardModel.font = .systemFont(ofSize: 12)
+        dashboardModel.target = self
+        dashboardModel.action = #selector(selectDashboardAGYModel(_:))
+        dashboardModel.translatesAutoresizingMaskIntoConstraints = false
+        dashboardModel.widthAnchor.constraint(equalToConstant: 245).isActive = true
+        dashboardModelLabel.font = .systemFont(ofSize: 12, weight: .medium)
+        dashboardModelRow.orientation = .horizontal
+        dashboardModelRow.alignment = .centerY
+        dashboardModelRow.spacing = 12
+        dashboardModelRow.addArrangedSubview(dashboardModelLabel)
+        dashboardModelRow.addArrangedSubview(dashboardModel)
+        root.addArrangedSubview(dashboardModelRow)
+        dashboardModelHint.font = .systemFont(ofSize: 10)
+        dashboardModelHint.textColor = .secondaryLabelColor
+        root.addArrangedSubview(dashboardModelHint)
 
         let metrics = NSStackView(views: [dashboardFiveHour, dashboardWeek, dashboardResets])
         metrics.orientation = .horizontal
@@ -719,14 +852,27 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     private func updateDashboard() {
         guard dashboardWindow != nil else { return }
         dashboardWindow?.title = "Codex Usage Menu \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")"
-        switch displayState {
+        dashboardTitle.stringValue = provider.title + " Usage"
+        dashboardProvider.setAccessibilityLabel(language.text("用量来源", "用量來源", "Usage provider"))
+        dashboardProvider.selectedSegment = provider.rawValue
+        dashboardFiveHour.titleField.stringValue = provider.firstLabel
+        dashboardWeek.titleField.stringValue = provider.secondLabel
+        dashboardResets.isHidden = provider == .gemini
+        updateAGYModelControls()
+        switch presentedState {
         case .loading:
             dashboardFiveHour.valueField.stringValue = "—"
             dashboardWeek.valueField.stringValue = "—"
             dashboardResets.valueField.stringValue = "—"
             dashboardStatus.stringValue = language.text("正在同步用量…", "正在同步用量…", "Syncing usage…")
         case .usage(let usage, let updatedAt):
-            dashboardFiveHour.valueField.stringValue = usage.fiveHour.map { "\($0.remaining)%" } ?? "—"
+            dashboardFiveHour.valueField.stringValue = usage.displayedFiveHour.map { "\($0.remaining)%" } ?? "—"
+            if usage.usesWeeklyFallback {
+                dashboardFiveHour.titleField.stringValue = "5 H*"
+                dashboardModelHint.stringValue += language.text(
+                    " · 仅周额度，5 H* 同步显示周额度", " · 僅週額度，5 H* 同步顯示週額度",
+                    " · Weekly only; 5 H* mirrors weekly quota")
+            }
             dashboardWeek.valueField.stringValue = usage.weekly.map { "\($0.remaining)%" } ?? "—"
             dashboardResets.valueField.stringValue = usage.resetCredits.map(String.init) ?? "—"
             dashboardStatus.stringValue = language.text("更新于 ", "更新於 ", "Updated ")
@@ -759,8 +905,9 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         dashboardModeLabel.stringValue = language.text("菜单栏显示", "選單列顯示", "Menu bar display")
         dashboardRefreshButton.title = language.text("刷新", "重新整理", "Refresh")
         dashboardRefreshButton.toolTip = language.text("立即刷新用量", "立即重新整理用量", "Refresh usage now")
-        dashboardChooseCLIButton.title = language.text("选择 CLI…", "選擇 CLI…", "Choose CLI…")
-        dashboardChooseCLIButton.isHidden = client.executableURL() != nil
+        dashboardChooseCLIButton.title = language.text("选择 ", "選擇 ", "Choose ") + (provider == .codex ? "CLI…" : "agy…")
+        dashboardChooseCLIButton.isHidden = provider == .codex ? client.executableURL() != nil : geminiClient.executableURL() != nil
+        dashboardRefreshButton.isEnabled = !refreshingProviders.contains(provider)
         dashboardHelp.stringValue = language.text(
             "关闭窗口后仍会在菜单栏运行。需要窗口时，从“应用程序”再次打开。",
             "關閉視窗後仍會在選單列執行。需要視窗時，從「應用程式」再次開啟。",
@@ -769,16 +916,21 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func refreshIfDue() {
+        agyModelMonitor.check()
         guard !activityCheckInFlight else { return }
         activityCheckInFlight = true
         let bundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+        let selectedProvider = provider
         let codexIsForeground = bundleID == "com.openai.codex" || bundleID == "com.openai.chatgpt"
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            let active = codexIsForeground || CodexActivity.hasRecentSession()
+            let active = selectedProvider == .codex
+                ? (codexIsForeground || CodexActivity.hasRecentSession())
+                : GeminiUsageClient.hasRecentSession()
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.activityCheckInFlight = false
-                guard let lastRefreshStartedAt = self.lastRefreshStartedAt else { return }
+                guard self.provider == selectedProvider,
+                      let lastRefreshStartedAt = self.refreshDates[selectedProvider] else { return }
                 let interval = active ? Self.activeRefreshInterval : Self.inactiveRefreshInterval
                 if Date.now.timeIntervalSince(lastRefreshStartedAt) >= interval - 1 {
                     self.refreshNow()
@@ -803,20 +955,115 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         render()
     }
 
+    @objc private func selectProvider(_ sender: NSMenuItem) {
+        changeProvider(UsageProvider(rawValue: sender.tag) ?? .codex)
+    }
+
+    @objc private func selectDashboardProvider(_ sender: NSSegmentedControl) {
+        changeProvider(UsageProvider(rawValue: sender.selectedSegment) ?? .codex)
+    }
+
+    private func changeProvider(_ selected: UsageProvider) {
+        guard selected != provider else { return }
+        UserDefaults.standard.set(selected.rawValue, forKey: "UsageProvider")
+        displayState = states[selected] ?? .loading
+        render()
+        refreshNow()
+    }
+
+    @objc private func selectAGYModel(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String else { return }
+        changeAGYModel(id)
+    }
+
+    @objc private func selectDashboardAGYModel(_ sender: NSPopUpButton) {
+        guard let id = sender.selectedItem?.representedObject as? String else { return }
+        changeAGYModel(id)
+    }
+
+    private func changeAGYModel(_ id: String) {
+        UserDefaults.standard.set(id == "auto", forKey: "AGYFollowCurrentModel")
+        if id != "auto" { UserDefaults.standard.set(id, forKey: "AGYSelectedModel") }
+        agyModelMonitor.check()
+        render()
+    }
+
+    private func updateAGYModelControls() {
+        let visible = provider == .gemini
+        modelSelectionItem.isHidden = !visible
+        dashboardModelRow.isHidden = !visible
+        dashboardModelHint.isHidden = !visible
+        guard visible else { return }
+        let label = language.text("模型/额度", "模型/額度", "Model / quota")
+        let options = agyModelOptions
+        let selection = selectedAGYModel
+        let selectedID = selectedAGYModelID ?? selection?.id
+        let name = (followsAGYModel ? currentAGYModelName : selection?.name)
+            ?? language.text("所选模型不可用", "所選模型無法使用", "Selected model unavailable")
+        let automatic = language.text("自动跟随 agy", "自動跟隨 agy", "Follow agy automatically")
+        modelSelectionItem.title = label + ": " + (followsAGYModel ? automatic + " · " : "") + name
+        dashboardModelLabel.stringValue = label
+        dashboardModel.setAccessibilityLabel(label)
+        dashboardModel.removeAllItems()
+        let submenu = NSMenu()
+        let autoItem = NSMenuItem(title: automatic, action: #selector(selectAGYModel(_:)), keyEquivalent: "")
+        autoItem.target = self
+        autoItem.representedObject = "auto"
+        autoItem.state = followsAGYModel ? .on : .off
+        submenu.addItem(autoItem)
+        submenu.addItem(.separator())
+        dashboardModel.addItem(withTitle: automatic)
+        dashboardModel.lastItem?.representedObject = "auto"
+        for option in options {
+            let item = NSMenuItem(title: option.name, action: #selector(selectAGYModel(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = option.id
+            item.state = !followsAGYModel && option.id == selectedID ? .on : .off
+            submenu.addItem(item)
+            dashboardModel.addItem(withTitle: option.name)
+            dashboardModel.lastItem?.representedObject = option.id
+            if !followsAGYModel && option.id == selectedID { dashboardModel.select(dashboardModel.lastItem) }
+        }
+        if followsAGYModel { dashboardModel.selectItem(at: 0) }
+        if !followsAGYModel && !options.contains(where: { $0.id == selectedID }) {
+            dashboardModel.insertItem(withTitle: name, at: 0)
+            dashboardModel.item(at: 0)?.isEnabled = false
+            dashboardModel.selectItem(at: 0)
+        }
+        dashboardModel.isEnabled = true
+        modelSelectionItem.submenu = submenu
+        modelSelectionItem.isEnabled = true
+        if let selection, selection.isShared {
+            dashboardModelHint.stringValue = language.text("共享额度：", "共享額度：", "Shared quota: ") + selection.groupName
+        } else {
+            dashboardModelHint.stringValue = selection?.groupName ?? language.text("刷新后获取可用模型", "重新整理後取得可用模型", "Refresh to load available models")
+        }
+        if followsAGYModel {
+            dashboardModelHint.stringValue = name + " · " + (selection == nil
+                ? language.text("未匹配到额度池", "未匹配到額度池", "No matching quota pool")
+                : dashboardModelHint.stringValue)
+        }
+    }
+
     @objc private func refreshNow() {
-        guard !refreshing else { return }
-        refreshing = true
-        lastRefreshStartedAt = .now
+        let selected = provider
+        guard !refreshingProviders.contains(selected) else { return }
+        refreshingProviders.insert(selected)
+        refreshDates[selected] = .now
+        render()
         DispatchQueue.global(qos: .utility).async { [weak self] in
             guard let self else { return }
-            let result = Result { try self.client.fetch() }
+            let result = Result { try selected == .codex ? self.client.fetch() : self.geminiClient.fetch() }
             DispatchQueue.main.async {
-                self.refreshing = false
-                self.checkLanguage()
+                self.refreshingProviders.remove(selected)
+                let state: DisplayState
                 switch result {
-                case .success(let usage): self.displayState = .usage(usage, .now)
-                case .failure(let error): self.displayState = .failure(error)
+                case .success(let usage): state = .usage(usage, .now)
+                case .failure(let error): state = .failure(error)
                 }
+                self.states[selected] = state
+                if self.provider == selected { self.displayState = state }
+                self.checkLanguage()
                 self.render()
             }
         }
@@ -828,8 +1075,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.canChooseDirectories = false
         panel.showsHiddenFiles = true
         panel.treatsFilePackagesAsDirectories = true
-        panel.message = language.text("请选择 codex 可执行文件", "請選擇 codex 執行檔",
-                                      "Choose the codex executable")
+        panel.message = language.text("请选择可执行文件：", "請選擇執行檔：", "Choose executable: ") + (provider == .codex ? "codex" : "agy")
         NSApplication.shared.activate(ignoringOtherApps: true)
         guard panel.runModal() == .OK, let url = panel.url else { return }
         guard FileManager.default.isExecutableFile(atPath: url.path) else {
@@ -839,23 +1085,34 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             alert.runModal()
             return
         }
-        UserDefaults.standard.set(url.path, forKey: CodexUsageClient.preferredExecutablePathKey)
+        UserDefaults.standard.set(url.path, forKey: provider == .codex
+            ? CodexUsageClient.preferredExecutablePathKey : GeminiUsageClient.preferredExecutablePathKey)
         refreshNow()
     }
 
     private func render() {
+        contentView.provider = provider
+        contentView.showsWeeklyFallback = false
         updateDisplayMode()
+        providerItem.title = language.text("用量来源：", "用量來源：", "Usage provider: ") + provider.title
+        for (choice, item) in zip(UsageProvider.allCases, providerOptions) {
+            item.state = choice == provider ? .on : .off
+        }
+        refreshItem.isEnabled = !refreshingProviders.contains(provider)
+        creditsItem.isHidden = provider == .gemini
+        modelsItem.isHidden = true
+        modelsItem.title = language.text("agy 各额度池", "agy 各額度池", "agy quota pools")
         displayModeItem.title = language.text("菜单栏显示", "選單列顯示", "Menu bar display")
         for (mode, item) in zip(StatusDisplayMode.allCases, displayModeOptions) {
             item.title = mode.title(in: language)
             item.state = mode == preferredDisplayMode ? .on : .off
         }
         refreshItem.title = language.text("立即刷新", "立即重新整理", "Refresh now")
-        chooseCLIItem.title = language.text("选择 Codex CLI…", "選擇 Codex CLI…", "Choose Codex CLI…")
-        chooseCLIItem.isHidden = client.executableURL() != nil
+        chooseCLIItem.title = language.text("选择 ", "選擇 ", "Choose ") + (provider == .codex ? "Codex" : "agy") + " CLI…"
+        chooseCLIItem.isHidden = provider == .codex ? client.executableURL() != nil : geminiClient.executableURL() != nil
         quitItem.title = language.text("退出", "結束", "Quit")
 
-        switch displayState {
+        switch presentedState {
         case .loading:
             contentView.fiveHour = "—"
             contentView.week = "—"
@@ -868,7 +1125,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             statusItem.button?.toolTip = language.text("Codex 剩余用量", "Codex 剩餘用量",
                                                        "Codex remaining usage")
         case .usage(let usage, let updatedAt):
-            let five = usage.fiveHour.map { "\($0.remaining)%" } ?? "—"
+            contentView.showsWeeklyFallback = usage.usesWeeklyFallback
+            let five = usage.displayedFiveHour.map { "\($0.remaining)%" } ?? "—"
             let week = usage.weekly.map { "\($0.remaining)%" } ?? "—"
             let credits = usage.resetCredits.map(String.init) ?? "—"
             contentView.fiveHour = five
@@ -896,6 +1154,45 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
                                              "Choose Refresh now to retry")
             statusItem.button?.toolTip = error.localizedDescription
         }
+        if provider == .gemini {
+            switch presentedState {
+            case .loading:
+                fiveHourInfo.text = "5 H: " + language.text("读取中…", "讀取中…", "Loading…")
+                weeklyInfo.text = "WEEK: " + language.text("读取中…", "讀取中…", "Loading…")
+            case .usage(let usage, _):
+                let firstLabel = usage.usesWeeklyFallback
+                    ? language.text("5 H*（同周额度）：", "5 H*（同週額度）：", "5 H* (weekly quota): ")
+                    : "5 H: "
+                fiveHourInfo.text = firstLabel + (usage.displayedFiveHour.map { "\($0.remaining)%" } ?? "—") + resetText(usage.displayedFiveHour?.resetsAt)
+                weeklyInfo.text = "WEEK: " + (usage.weekly.map { "\($0.remaining)%" } ?? "—") + resetText(usage.weekly?.resetsAt)
+                let submenu = NSMenu()
+                submenu.autoenablesItems = false
+                for quota in usage.quotaBuckets {
+                    let row = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+                    let info = MenuInfoView()
+                    info.frame.size.width = 400
+                    info.text = quota.groupName + " · " + quota.windowID + ": \(quota.window.remaining)%" + resetText(quota.resetsAt)
+                    row.view = info
+                    row.isEnabled = false
+                    submenu.addItem(row)
+                }
+                modelsItem.submenu = submenu
+                modelsItem.isHidden = usage.quotaBuckets.isEmpty
+            case .failure: break
+            }
+            let modelName = selectedAGYModel?.name ?? language.text("所选模型不可用", "所選模型無法使用", "Selected model unavailable")
+            statusItem.button?.toolTip = "agy · " + modelName + " · 5 H / WEEK"
+            if let selection = selectedAGYModel, selection.isShared {
+                statusItem.button?.toolTip? += " · " + selection.groupName
+            }
+            if case .usage(let usage, _) = presentedState, usage.usesWeeklyFallback {
+                statusItem.button?.toolTip? += language.text(
+                    " · 5 H* 同步显示周额度（此模型无独立 5 小时额度）",
+                    " · 5 H* 同步顯示週額度（此模型無獨立 5 小時額度）",
+                    " · 5 H* mirrors weekly quota; no separate five-hour quota")
+            }
+            if case .failure(let error) = presentedState { statusItem.button?.toolTip = error.localizedDescription }
+        }
         statusItem.button?.image = contentView.templateImage()
         updateDashboard()
     }
@@ -915,10 +1212,12 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             mode = preferredDisplayMode
         }
-        guard contentView.displayMode != mode || statusItem.length != mode.width else { return }
+        let width: CGFloat = provider == .gemini && mode != .iconOnly
+            ? (mode == .compact ? 84 : 108) : mode.width
+        guard contentView.displayMode != mode || statusItem.length != width else { return }
         contentView.displayMode = mode
-        contentView.setFrameSize(NSSize(width: mode.width, height: 24))
-        statusItem.length = mode.width
+        contentView.setFrameSize(NSSize(width: width, height: 24))
+        statusItem.length = width
     }
 
     private func resetText(_ date: Date?) -> String {
@@ -939,20 +1238,36 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func quitApp() { NSApplication.shared.terminate(nil) }
 }
 
+#if !USAGE_TESTS
 @main
 private enum CodexUsageMenu {
     static func main() {
+        if CommandLine.arguments.contains("--diagnose-gemini") {
+            do {
+                let usage = try GeminiUsageClient().fetch()
+                for quota in usage.quotaBuckets {
+                    print("\(quota.groupName) · \(quota.windowID): \(quota.window.remaining)%")
+                }
+            } catch {
+                fputs((error.localizedDescription + "\n"), stderr)
+                exit(1)
+            }
+            return
+        }
         if CommandLine.arguments.contains("--diagnose-cli") {
             print(CodexUsageClient().executableURL()?.path ?? "Codex CLI not found")
             return
         }
         if CommandLine.arguments.contains("--render-preview") {
+            for provider in UsageProvider.allCases {
             for languageCode in ["en", "zh-Hans", "zh-Hant"] {
                 for (name, appearance) in [("light", NSAppearance.Name.aqua),
                                            ("dark", NSAppearance.Name.darkAqua)] {
                     for mode in [StatusDisplayMode.full, .compact, .iconOnly] {
-                        let view = StatusContentView(frame: NSRect(x: 0, y: 0,
-                                                                   width: mode.width, height: 24))
+                        let width: CGFloat = provider == .gemini && mode != .iconOnly
+                            ? (mode == .compact ? 84 : 108) : mode.width
+                        let view = StatusContentView(frame: NSRect(x: 0, y: 0, width: width, height: 24))
+                        view.provider = provider
                         view.displayMode = mode
                         view.appearance = NSAppearance(named: appearance)
                         view.usesWhiteForeground = true
@@ -963,7 +1278,7 @@ private enum CodexUsageMenu {
                         view.week = "91%"
                         view.resets = "1"
                         if let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil,
-                                                         pixelsWide: Int(mode.width * 4), pixelsHigh: 96,
+                                                         pixelsWide: Int(width * 4), pixelsHigh: 96,
                                                          bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
                                                          isPlanar: false, colorSpaceName: .deviceRGB,
                                                          bytesPerRow: 0, bitsPerPixel: 0) {
@@ -971,11 +1286,12 @@ private enum CodexUsageMenu {
                             view.cacheDisplay(in: view.bounds, to: bitmap)
                             if let data = bitmap.representation(using: .png, properties: [:]) {
                                 try? data.write(to: URL(fileURLWithPath:
-                                    "build/status-preview-\(languageCode)-\(name)-\(mode).png"))
+                                    "build/status-preview-\(provider.title.lowercased())-\(languageCode)-\(name)-\(mode).png"))
                             }
                         }
                     }
                 }
+            }
             }
             return
         }
@@ -997,3 +1313,4 @@ private enum CodexUsageMenu {
         }
     }
 }
+#endif

@@ -17,7 +17,7 @@ fi
 for arch in arm64 x86_64; do
   CLANG_MODULE_CACHE_PATH="$PWD/build/cache" swiftc -parse-as-library -swift-version 5 -O \
     "${sdk_args[@]}" -target "${arch}-apple-macos13.0" -framework AppKit \
-    Sources/CodexUsageMenu/main.swift -o "build/CodexUsageMenu-${arch}"
+    Sources/CodexUsageMenu/*.swift -o "build/CodexUsageMenu-${arch}"
 done
 rm -f "$app/Contents/MacOS/CodexUsageMenu"
 lipo -create build/CodexUsageMenu-arm64 build/CodexUsageMenu-x86_64 \

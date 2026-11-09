@@ -18,6 +18,12 @@ jobs:
         run: |
           version="$(tr -d '\r\n' < VERSION)"
           test "${GITHUB_REF_NAME}" = "v${version}"
+      - name: Test quota parsing and model following
+        run: |
+          mkdir -p build
+          swiftc -parse-as-library -swift-version 5 -DUSAGE_TESTS -framework AppKit \
+            Sources/CodexUsageMenu/*.swift Tests/UsageTests.swift -o build/usage-tests
+          build/usage-tests
       - name: Build universal DMG
         run: ./package.sh
       - name: Verify and checksum
