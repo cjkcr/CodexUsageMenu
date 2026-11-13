@@ -17,7 +17,15 @@
 
 Codex Usage Menu 是一款轻量的原生 macOS 菜单栏工具。它通过本机已登录的 CLI 读取剩余额度，可选择显示 Codex 或 Gemini（agy CLI）用量。
 
-## v1.1.0 新增功能
+## v1.1.1 更新
+
+- **支持 Gemini 4 Hydrogen**：可手动选择，也能自动跟随 Low / Medium / High / XHigh，显示对应的 `5 H` 与 `WEEK` 额度，并明确标注共享池。
+- **全新用量窗口**：统一原生控件、字体和留白，额度卡片增加细进度条与重置时间，窗口根据当前来源调整高度。
+- **重新设计下拉菜单**：集中呈现剩余比例、重置时间和更新时间；各额度池分组显示，长模型名不再撑宽主菜单。
+- **更易区分的图标**：Gemini 改为较小的中空描边图标，保持透明背景，并随系统适配前景颜色。
+- **浅色与深色适配**：柔和的分组背景、边框和清晰文字，在两种外观中保持一致层次。
+
+### v1.1.0 引入的功能
 
 - **新增 agy CLI 支持**：在 Codex / Gemini 用量之间切换，并记住选择。
 - **按模型查看额度**：支持 agy 返回的 Gemini、Argon、Claude 和 GPT 等模型额度池，可手动选择模型。
@@ -94,6 +102,7 @@ Codex Usage Menu 是一款轻量的原生 macOS 菜单栏工具。它通过本�
 - `5 H` / `WEEK` 显示当前所选模型对应额度池的剩余额度，向下取整；重置时间直接使用 agy 返回值。
 - Argon、Claude/GPT 等独立池不会混入 Gemini 共享池，可在“agy 各额度池”查看。
 - “模型/额度”按 agy 返回的模型说明生成选项，例如 Gemini Flash、Gemini Pro、Claude Opus、Claude Sonnet、GPT-OSS 和 Gemini 4 Argon；可用项目随账号及服务端变化。
+- 支持 **Gemini 4 Hydrogen**，包括 Low / Medium / High / XHigh 的自动跟随。旧版 agy 的 `/usage` 说明可能仍只写 Flash / Pro，此时 Hydrogen 显示 Gemini 共享池的 `5 H` / `WEEK` 额度，并标注“共享额度”；若以后明确返回 Hydrogen 独立池，则优先使用该池。额度归属依据 [Antigravity 官方额度说明](https://antigravity.google/docs/plans)。
 - “自动跟随 agy”监听 `~/.gemini/antigravity-cli/settings.json` 的模型变化，立即切换已缓存的额度，不额外发送生成请求。支持带版本号、推理强度的模型名匹配；无法唯一匹配时显示不可用。该文件是 agy 保存的模型选择，多个会话各自通过 `--model` / `--settings` 临时覆盖时，不能保证代表当前终端会话，可改为手动选择。
 - 多个模型共享同一额度池时，选择它们会显示同一组真实额度，窗口会标明“共享额度”。仅有每周额度的模型，两栏均显示周额度；第一栏标为 `5 H*`，并说明它同步显示周额度，而非独立的 5 小时额度。已保存的模型不再可用时，不会自动换成另一个模型的数据。
 - agy 未返回可用重置次数，因此切换后隐藏该项；缺失额度显示 `—`。

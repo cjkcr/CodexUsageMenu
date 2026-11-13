@@ -41,6 +41,24 @@ enum UsageTests {
         precondition(AGYModelOption.matching("Claude Opus 4.8 (Thinking)", in: options)?.name == "Claude Opus")
         precondition(AGYModelOption.matching("GPT-OSS 120B", in: options)?.name == "GPT-OSS")
         precondition(AGYModelOption.matching("Gemini 4 Argon", in: options)?.name == "Gemini 4 Argon")
+        for effort in ["Low", "Medium", "High", "XHigh", "Extra High"] {
+            let hydrogen = AGYModelOption.matching("Gemini 4 Hydrogen (\(effort))", in: options)
+            precondition(hydrogen?.name == "Gemini 4 Hydrogen" && hydrogen?.isShared == true)
+            let selected = usage.selectingAGYModel(hydrogen?.id)
+            precondition(selected.fiveHour?.remaining == 98 && selected.weekly?.remaining == 91,
+                         "Hydrogen must use baseline Gemini quota, not the independent Argon pool")
+        }
+        precondition(AGYModelOption.matching("gemini-4-hydrogen-xhigh", in: options)?.name == "Gemini 4 Hydrogen")
+        let dedicated = try GeminiQuota.parse(response([
+            group("Gemini Models", [["id": "gemini-weekly", "window": "weekly", "remaining_fraction": 0.91]]),
+            group("Gemini 4 Hydrogen", [["id": "gemini-hydrogen-weekly", "window": "weekly", "remaining_fraction": 0.42]])
+        ]))
+        let dedicatedOptions = AGYModelOption.options(from: dedicated)
+        precondition(dedicatedOptions.filter { $0.name.contains("Hydrogen") }.count == 1)
+        let dedicatedModel = AGYModelOption.matching("Gemini 4 Hydrogen (Medium)", in: dedicatedOptions)
+        let dedicatedUsage = UsageSnapshot(geminiQuotas: dedicated).selectingAGYModel(dedicatedModel?.id)
+        precondition(dedicatedUsage.weekly?.remaining == 42 && dedicatedUsage.usesWeeklyFallback,
+                     "An explicitly returned Hydrogen pool must take priority over compatibility mapping")
         precondition(AGYModelOption.matching("unknown-model", in: options) == nil)
         precondition(AGYModelOption.matching(nil, in: options) == nil)
         precondition(AGYModelOption.matching("Gemini Flash Pro", in: options) == nil, "Ambiguous matches must not borrow another model's pool")
@@ -78,7 +96,7 @@ enum UsageTests {
         try writeModel("Gemini 3.8 Pro")
         waitForChanges(5)
         precondition(changes.last! == "Gemini 3.8 Pro", "Watching must survive atomic replacement and recreation")
-        precondition(options.map { $0.name } == ["Gemini Flash", "Gemini Pro", "Claude Opus", "Claude Sonnet", "GPT-OSS", "Gemini 4 Argon"])
+        precondition(options.map { $0.name } == ["Gemini Flash", "Gemini Pro", "Claude Opus", "Claude Sonnet", "GPT-OSS", "Gemini 4 Argon", "Gemini 4 Hydrogen"])
         let claude = usage.selectingAGYModel(options[2].id)
         precondition(claude.fiveHour?.remaining == 100 && claude.weekly?.remaining == 49)
         let argon = usage.selectingAGYModel(options[5].id)
@@ -100,6 +118,8 @@ enum UsageTests {
         let argonOnly = UsageSnapshot(geminiQuotas: try GeminiQuota.parse(response([
             group("Gemini 4 Argon", [["id": "gemini-argon-wtu-weekly", "window": "weekly", "remaining_fraction": 0.5]])])))
         precondition(argonOnly.fiveHour == nil && argonOnly.weekly == nil, "Separate Argon quota must not be mislabeled as pooled Gemini quota")
+        precondition(!AGYModelOption.options(from: argonOnly.quotaBuckets).contains { $0.name.contains("Hydrogen") },
+                     "No baseline Gemini pool means no fabricated Hydrogen quota")
         for invalid in [[:], response([]), ["response": "not structured quota"],
                         response([group("Gemini Models", [["id": "bad", "window": "5h", "remaining_fraction": 2]])])] {
             do { _ = try GeminiQuota.parse(invalid); fatalError("Must reject invalid data") }

@@ -97,6 +97,17 @@ struct AGYModelOption {
                                               isShared: bucket.modelNames.count > 1))
             }
         }
+        // Older agy /usage descriptions still list only Flash and Pro. Hydrogen
+        // uses baseline Gemini quota (https://antigravity.google/docs/plans).
+        // Prefer any explicit Hydrogen pool returned by newer CLI versions.
+        let hasHydrogenPool = buckets.contains {
+            ([$0.groupName, $0.bucketID] + $0.modelNames)
+                .contains { $0.localizedCaseInsensitiveContains("hydrogen") }
+        }
+        if !hasHydrogenPool,
+           let shared = buckets.first(where: { ["gemini-5h", "gemini-weekly"].contains($0.bucketID) }) {
+            options.append(AGYModelOption(name: "Gemini 4 Hydrogen", groupName: shared.groupName, isShared: true))
+        }
         return options
     }
 }
