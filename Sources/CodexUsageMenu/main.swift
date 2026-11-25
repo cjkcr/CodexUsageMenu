@@ -100,7 +100,7 @@ struct UsageSnapshot {
 
     func selectingAGYModel(_ id: String?) -> UsageSnapshot {
         guard let id else { return self }
-        let option = AGYModelOption.options(from: quotaBuckets).first { $0.id == id }
+        let option = AGYModelOption.resolvingSavedID(id, in: AGYModelOption.options(from: quotaBuckets))
         // A missing saved model must show unavailable data, never silently another pool.
         return UsageSnapshot(geminiQuotas: quotaBuckets, selectedGroup: option?.groupName ?? "")
     }
@@ -419,7 +419,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         if followsAGYModel {
             return AGYModelOption.matching(currentAGYModelName, in: agyModelOptions)?.id ?? "unavailable-current-model"
         }
-        return UserDefaults.standard.string(forKey: "AGYSelectedModel")
+        guard let saved = UserDefaults.standard.string(forKey: "AGYSelectedModel") else { return nil }
+        return AGYModelOption.resolvingSavedID(saved, in: agyModelOptions)?.id ?? saved
     }
     private var agyModelOptions: [AGYModelOption] {
         if case .usage(let usage, _) = displayState {

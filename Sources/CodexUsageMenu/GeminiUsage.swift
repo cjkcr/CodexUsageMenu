@@ -53,7 +53,10 @@ struct GeminiQuota {
                 let reset = (bucket["reset_time"] as? String).flatMap { value -> Date? in
                     let formatter = ISO8601DateFormatter()
                     formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-                    return formatter.date(from: value) ?? ISO8601DateFormatter().date(from: value)
+                    guard let date = formatter.date(from: value) ?? ISO8601DateFormatter().date(from: value),
+                          date.timeIntervalSince1970 > 0 else { return nil }
+                    // agy uses the Unix epoch when a quota window has not started.
+                    return date
                 }
                 return GeminiQuota(groupName: name, modelNames: modelNames, bucketID: id, windowID: windowID,
                                    fraction: fraction.doubleValue, resetsAt: reset)
@@ -74,17 +77,42 @@ struct AGYModelOption {
     // Only accept a unique family match; never guess an unrelated quota pool.
     static func matching(_ model: String?, in options: [AGYModelOption]) -> AGYModelOption? {
         guard let model else { return nil }
-        func words(_ name: String) -> Set<String> {
-            Set(name.lowercased().components(separatedBy: CharacterSet.alphanumerics.inverted)
-                .filter { !$0.isEmpty && $0.rangeOfCharacter(from: .letters) != nil })
+        func tokens(_ name: String) -> (words: Set<String>, version: [String]) {
+            let lower = name.lowercased()
+            let regex = try! NSRegularExpression(pattern: "[a-z]+|[0-9]+")
+            let parts = regex.matches(in: lower, range: NSRange(lower.startIndex..., in: lower))
+                .compactMap { Range($0.range, in: lower).map { String(lower[$0]) } }
+            return (Set(parts.filter { $0.first?.isNumber == false }),
+                    parts.filter { $0.first?.isNumber == true })
         }
-        if let exact = options.first(where: { $0.name.caseInsensitiveCompare(model) == .orderedSame }) { return exact }
-        let tokens = words(model)
+        let exact = options.filter { $0.name.caseInsensitiveCompare(model) == .orderedSame }
+        if !exact.isEmpty { return exact.count == 1 ? exact[0] : nil }
+        // CLI IDs include "gemini-pro", which would also match the standalone
+        // Neon/Argon family. Resolve the catalog's named Orchestrator IDs first.
+        let orchestratorIDs = ["gemini-pro-orchestrator-neon": "Orchestrator (Neon)",
+                               "gemini-pro-orchestrator": "Orchestrator (Carbon)",
+                               "gemini-pro-orchestrator-argon": "Orchestrator (Argon)"]
+        if let name = orchestratorIDs[model.lowercased()] {
+            return options.first { $0.name.caseInsensitiveCompare(name) == .orderedSame }
+        }
+        let current = tokens(model)
         let matches = options.filter {
-            let family = words($0.name)
-            return !family.isEmpty && family.isSubset(of: tokens)
+            let family = tokens($0.name)
+            let compatibleVersion = family.version.isEmpty || current.version.isEmpty
+                || family.version == current.version
+            return !family.words.isEmpty && family.words.isSubset(of: current.words) && compatibleVersion
         }
         return matches.count == 1 ? matches[0] : nil
+    }
+
+    static func resolvingSavedID(_ id: String, in options: [AGYModelOption]) -> AGYModelOption? {
+        if let exact = options.first(where: { $0.id == id }) { return exact }
+        guard let separator = id.range(of: "::"), separator.lowerBound != id.startIndex else { return nil }
+        let name = String(id[separator.upperBound...])
+        guard !name.isEmpty else { return nil }
+        // A model can move pools or gain a versioned display name after an agy
+        // upgrade. Resolve its identity against the current server description.
+        return matching(name, in: options)
     }
 
     static func options(from buckets: [GeminiQuota]) -> [AGYModelOption] {

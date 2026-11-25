@@ -110,6 +110,56 @@ enum UsageTests {
         precondition(unavailable.displayedFiveHour == nil && !unavailable.usesWeeklyFallback)
         precondition(pro.displayedFiveHour?.remaining == 98 && !pro.usesWeeklyFallback)
         precondition(usage.weekly?.remaining == 91, "Selecting a model must not mutate cached raw data")
+        // New agy response observed on 2026-11-25: named model versions,
+        // Orchestrator families, merged Gemini quota and unset epoch reset times.
+        var currentGemini = group("Gemini Models", [
+            ["id": "gemini-weekly", "window": "weekly", "remaining_fraction": 0.83, "reset_time": "2026-12-01T01:22:59Z"],
+            ["id": "gemini-5h", "window": "5h", "remaining_fraction": 0.92, "reset_time": "2026-11-25T19:18:50Z"]
+        ])
+        currentGemini["description"] = "Models within this group: Gemini 4 Neon, Gemini 4 Carbon, Gemini 4 Argon, Gemini 4 Hydrogen, Orchestrator (Neon), Orchestrator (Carbon), Orchestrator (Argon), Gemini 3.8 Flash"
+        var currentThirdParty = group("Claude and GPT models", [
+            ["id": "3p-weekly", "window": "weekly", "remaining_fraction": 1, "reset_time": "1970-01-01T00:00:00Z"],
+            ["id": "3p-5h", "window": "5h", "remaining_fraction": 1, "reset_time": "1970-01-01T00:00:00.000Z"]
+        ])
+        currentThirdParty["description"] = "Models within this group: Claude Opus 5.5, Claude Sonnet 5.5, GPT-OSS 120B"
+        let upgraded = UsageSnapshot(geminiQuotas: try GeminiQuota.parse(response([currentGemini, currentThirdParty])))
+        let upgradedOptions = AGYModelOption.options(from: upgraded.quotaBuckets)
+        precondition(upgradedOptions.count == 11)
+        precondition(upgradedOptions.filter { $0.name.contains("Hydrogen") }.count == 1)
+        for name in ["Gemini 4 Neon (XHigh)", "Gemini 4 Carbon (High)", "Gemini 4 Hydrogen (Medium)",
+                     "Orchestrator (Neon)", "Orchestrator (Carbon)", "Orchestrator (Argon)"] {
+            let option = AGYModelOption.matching(name, in: upgradedOptions)
+            precondition(option?.groupName == "Gemini Models" && option?.isShared == true)
+        }
+        for (id, label) in [("gemini-pro-orchestrator-neon", "Orchestrator (Neon)"),
+                            ("gemini-pro-orchestrator", "Orchestrator (Carbon)"),
+                            ("gemini-pro-orchestrator-argon", "Orchestrator (Argon)")] {
+            precondition(AGYModelOption.matching(id, in: upgradedOptions)?.name == label)
+        }
+        for (saved, label) in [("Gemini Models::Gemini Flash", "Gemini 3.8 Flash"),
+                               ("Gemini 4 Argon::Gemini 4 Argon", "Gemini 4 Argon"),
+                               ("Claude and GPT models::Claude Opus", "Claude Opus 5.5")] {
+            let resolved = AGYModelOption.resolvingSavedID(saved, in: upgradedOptions)
+            precondition(resolved?.name == label)
+            let selected = upgraded.selectingAGYModel(saved)
+            precondition(selected.weekly != nil && selected.fiveHour != nil,
+                         "Saved model selection must survive an explicit pool move or versioned label")
+        }
+        let movedArgon = upgraded.selectingAGYModel("Gemini 4 Argon::Gemini 4 Argon")
+        precondition(movedArgon.fiveHour?.remaining == 92 && movedArgon.weekly?.remaining == 83 && !movedArgon.usesWeeklyFallback)
+        let unusedClaude = upgraded.selectingAGYModel("Claude and GPT models::Claude Opus")
+        precondition(unusedClaude.fiveHour?.remaining == 100 && unusedClaude.weekly?.remaining == 100)
+        precondition(unusedClaude.fiveHour?.resetsAt == nil && unusedClaude.weekly?.resetsAt == nil,
+                     "Unset reset times must not show January 1970")
+        precondition(AGYModelOption.matching("claude-opus-5-5-high", in: upgradedOptions)?.name == "Claude Opus 5.5")
+        precondition(AGYModelOption.matching("Claude Opus 4.8 (High)", in: upgradedOptions) == nil,
+                     "A specific old version must not silently become another version")
+        precondition(upgraded.selectingAGYModel("Gemini Models::Gemini Pro").fiveHour == nil,
+                     "Removed models must remain unavailable")
+        let ambiguousVersions = upgradedOptions + [AGYModelOption(name: "Claude Opus 4.6", groupName: "Other", isShared: false)]
+        precondition(AGYModelOption.resolvingSavedID("old::Claude Opus", in: ambiguousVersions) == nil)
+        precondition(AGYModelOption.matching("Claude Opus 4.6 (High)", in: ambiguousVersions)?.name == "Claude Opus 4.6")
+        precondition(AGYModelOption.resolvingSavedID("removed-model", in: upgradedOptions) == nil)
         for fraction in [0.0, 1.0] {
             let parsed = try GeminiQuota.parse(response([group("Gemini Models", [
                 ["id": "gemini-5h", "window": "5h", "remaining_fraction": fraction]])]))
